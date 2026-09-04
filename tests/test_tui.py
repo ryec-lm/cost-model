@@ -138,7 +138,7 @@ async def test_shift_o_adds_component_to_first_principles_line(tmp_path):
         await pilot.press("escape")
         await pilot.pause()
 
-        await pilot.press("shift+o")
+        await pilot.press("O")  # real Shift+O keypress arrives as the character
         await pilot.pause()
 
         line = app.lines["L001"]
@@ -183,7 +183,7 @@ async def test_add_component_expands_a_collapsed_line(tmp_path):
 
         _line_row(app, "L001").focus()
         await pilot.pause()
-        await pilot.press("shift+o")
+        await pilot.press("O")  # real Shift+O keypress arrives as the character
         await pilot.pause()
 
         line = app.lines["L001"]
@@ -370,14 +370,14 @@ async def test_shift_j_k_reorder_siblings(tmp_path):
 
         _line_row(app, "L002").focus()
         await pilot.pause()
-        await pilot.press("shift+k")
+        await pilot.press("K")  # real Shift+K keypress arrives as the character
         await pilot.pause()
 
         assert app.wbs_numbers["L002"] == "1"
         assert app.wbs_numbers["L001"] == "2"
         assert app.focused.line_id == "L002"
 
-        await pilot.press("shift+j")
+        await pilot.press("J")  # real Shift+J keypress arrives as the character
         await pilot.pause()
         assert app.wbs_numbers["L002"] == "2"
         assert app.wbs_numbers["L001"] == "1"
@@ -451,3 +451,69 @@ async def test_escape_closes_command_bar_without_running_it(tmp_path):
 
         assert not app.query_one("#command_bar").display
         assert app.focused is _line_row(app, "L001")
+
+
+async def test_indent_makes_line_child_of_preceding_sibling(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("ctrl+o")  # second root line
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.lines["L002"].parent_line_id is None
+
+        _line_row(app, "L002").focus()
+        await pilot.pause()
+        await pilot.press(">")
+        await pilot.pause()
+
+        assert app.lines["L002"].parent_line_id == "L001"
+        assert app.wbs_numbers["L002"] == "1.1"
+        assert app.focused.line_id == "L002"
+
+
+async def test_outdent_moves_line_to_grandparent_level(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("o")  # child of L001
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.lines["L002"].parent_line_id == "L001"
+
+        _line_row(app, "L002").focus()
+        await pilot.pause()
+        await pilot.press("<")
+        await pilot.pause()
+
+        assert app.lines["L002"].parent_line_id is None
+        assert app.wbs_numbers["L002"] == "2"
+
+
+async def test_indent_and_outdent_at_edges_are_noop(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # only line, first among its (empty) siblings, and already a root:
+        # both directions are no-ops, not errors
+        await pilot.press(">")
+        await pilot.pause()
+        assert app.lines["L001"].parent_line_id is None
+
+        await pilot.press("<")
+        await pilot.pause()
+        assert app.lines["L001"].parent_line_id is None

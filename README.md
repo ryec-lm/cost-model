@@ -38,11 +38,12 @@ so it's never silent.
 each line's position in the tree - depth plus order among siblings - so
 they're never stored and always stay correct as you add, remove, or
 reorder lines. Order among siblings is controlled by `sort_index` (a new
-line is appended last; `move-line`/`shift+k`/`shift+j` swap a line with
-its neighbor). Set `wbs_override` on a line (`--wbs` on the CLI, or just
-type into the WBS cell in the TUI) to pin an explicit number instead;
-clearing it (`--clear-wbs`, or blanking the TUI cell) goes back to
-auto-numbering.
+line is appended last; `move-line`, or `K`/`J` in the TUI, swaps a line
+with its neighbor; `move-line ... indent|outdent`, or `>`/`<` in the TUI,
+changes its level). Set `wbs_override` on a line (`--wbs` on the CLI, or
+just type into the WBS cell in the TUI) to pin an explicit number
+instead; clearing it (`--clear-wbs`, or blanking the TUI cell) goes back
+to auto-numbering.
 
 **Cost components** live only under `first_principles` lines. Each has a
 `cost_type` (labor/material/equipment/shipping/subcontract) and its own
@@ -69,7 +70,7 @@ pbs [-f FILE] add-component  LINE_ID  [--cost-type] [--cost-method] [method-spec
 pbs [-f FILE] edit-component LINE_ID COMPONENT_ID [same flags as add-component]
 pbs [-f FILE] remove-line    LINE_ID  [--yes] [--cascade | --reassign-to PARENT_ID]
 pbs [-f FILE] remove-component LINE_ID COMPONENT_ID [--yes]
-pbs [-f FILE] move-line      LINE_ID  up|down
+pbs [-f FILE] move-line      LINE_ID  up|down|indent|outdent
 pbs [-f FILE] show-tree      [LINE_ID]
 pbs [-f FILE] show-line      LINE_ID
 pbs [-f FILE] calc           [LINE_ID]
@@ -118,25 +119,39 @@ mid-edit:
 | `Escape` | Back to normal mode (focus returns to the row) |
 | `o` | Add line (as a child of the focused row, or a root line if none focused) - also drops into insert mode on the new row, like vim's `o` |
 | `Ctrl+o` | Add a root-level line regardless of what's focused (since `o` always nests under the focused row) |
-| `Shift+o` | Add component (focused line must be `first_principles`) |
+| `Shift+O` | Add component (focused line must be `first_principles`) |
 | `dd` | Remove the focused line or component (press `d` twice, like vim's delete-line) |
-| `Shift+k` / `Shift+j` | Move the focused line up/down among its siblings (changes its WBS number) |
+| `>` / `<` | Indent/outdent the focused line a level - `>` makes it a child of its preceding sibling, `<` promotes it to a sibling of its own parent (both change its WBS number) |
+| `Shift+K` / `Shift+J` | Move the focused line up/down among its siblings (changes its WBS number) |
 | `:` | Open a command line for `:w [path]`, `:e <path>`, `:wq [path]`, `:q` |
 | `v` | Validate |
 | `x` | Export to CSV |
 | `r` | Reload from disk |
 | `q` | Quit |
 
+A real Shift+letter keypress reaches the terminal (and Textual) as the
+plain uppercase character, not "shift+x" - so it's written here as
+`Shift+O`/`Shift+K`/`Shift+J` but the bindings fire on the letters `O`,
+`K`, `J` themselves. `Ctrl+letter` combos don't have this ambiguity.
+
 Click a line's `v`/`>` toggle (mouse only, for now) to collapse/expand its
 children, including a `first_principles` line's components. Mouse clicks
 always work for editing too - clicking any field jumps straight into
 editing it, same as `i`/`Enter`. The WBS cell is just another editable
-field: it shows the auto-computed number, and typing over it pins an
-override (blank it to go back to auto).
+field, in its own fixed column on the far left: it shows the
+auto-computed number, and typing over it pins an override (blank it to
+go back to auto).
+
+Tab/Shift+Tab were the obvious choice for indent/outdent, but Textual's
+own focus-cycling claims Tab before an app-level binding ever sees it
+(it moves focus into the row's fields instead) - so indent uses vim's
+actual `>`/`<` instead, which is more authentically vim than Tab would
+have been anyway.
 
 This borrows vim's normal/insert-mode split and its most iconic verbs
-(`o`, `dd`), not the full command grammar - no operator+motion combos
-(`dw`, `d$`, ...) or count prefixes. The one exception is a minimal `:`
+(`o`, `dd`, `>`/`<`), not the full command grammar - no operator+motion
+combos (`dw`, `d$`, `>j`, ...) or count prefixes. The one exception is a
+minimal `:`
 command line, since `:w`/`:e` map so directly onto save-as/load:
 
 - `:w` saves to the current file (redundant with autosave, but harmless);
@@ -188,9 +203,10 @@ pbs calc
 pbs validate
 pbs export estimate.csv
 
-pbs move-line L003 up          # Ballast before Track Structure -> WBS renumbers
-pbs edit-line L004 --wbs 99.0  # pin Design & Engineering to a fixed number
-pbs save-as estimate_v2.json   # snapshot to a new file
+pbs move-line L003 up            # Ballast before Track Structure -> WBS renumbers
+pbs move-line L004 indent        # Design & Engineering -> child of Ballast
+pbs edit-line L004 --wbs 99.0    # pin Design & Engineering to a fixed number
+pbs save-as estimate_v2.json     # snapshot to a new file
 ```
 
 ## Tests

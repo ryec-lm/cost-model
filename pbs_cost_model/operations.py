@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .models import PBSTree, children_of, descendants_of
+from .storage import next_sort_index
 
 
 class OperationError(Exception):
@@ -69,4 +70,35 @@ def move_line(lines: PBSTree, line_id: str, direction: str) -> bool:
         lines[neighbor_id].sort_index,
         lines[line_id].sort_index,
     )
+    return True
+
+
+def indent_line(lines: PBSTree, line_id: str) -> bool:
+    """Make a line a child of its immediately preceding sibling (WBS 1.2 -> 1.1.1).
+
+    Returns False (a no-op) if it's already the first among its siblings -
+    there's no preceding sibling to become a child of.
+    """
+    line = lines[line_id]
+    siblings = children_of(lines, line.parent_line_id)
+    index = siblings.index(line_id)
+    if index == 0:
+        return False
+    new_parent = siblings[index - 1]
+    line.parent_line_id = new_parent
+    line.sort_index = next_sort_index(lines, new_parent)
+    return True
+
+
+def outdent_line(lines: PBSTree, line_id: str) -> bool:
+    """Move a line up to be a sibling of its own parent (WBS 1.2.1 -> 1.3).
+
+    Returns False (a no-op) if the line is already a root line.
+    """
+    line = lines[line_id]
+    if line.parent_line_id is None:
+        return False
+    grandparent = lines[line.parent_line_id].parent_line_id
+    line.parent_line_id = grandparent
+    line.sort_index = next_sort_index(lines, grandparent)
     return True

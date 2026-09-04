@@ -1,5 +1,5 @@
 from pbs_cost_model.models import PBSLine
-from pbs_cost_model.operations import move_line
+from pbs_cost_model.operations import indent_line, move_line, outdent_line
 from pbs_cost_model.wbs import compute_wbs_numbers, display_wbs
 
 
@@ -83,3 +83,69 @@ def test_move_line_only_affects_siblings():
     assert numbers["L002"] == "1.2"
     assert numbers["L003"] == "1.1"
     assert numbers["L004"] == "2"
+
+
+def test_indent_makes_line_child_of_preceding_sibling():
+    lines = {
+        "L001": line(line_id="L001", line_name="A", sort_index=0),
+        "L002": line(line_id="L002", line_name="B", sort_index=1),
+    }
+    assert indent_line(lines, "L002") is True
+    assert lines["L002"].parent_line_id == "L001"
+    numbers = compute_wbs_numbers(lines)
+    assert numbers["L001"] == "1"
+    assert numbers["L002"] == "1.1"
+
+
+def test_indent_first_sibling_is_noop():
+    lines = {
+        "L001": line(line_id="L001", line_name="A", sort_index=0),
+        "L002": line(line_id="L002", line_name="B", sort_index=1),
+    }
+    assert indent_line(lines, "L001") is False
+    assert lines["L001"].parent_line_id is None
+
+
+def test_outdent_moves_line_to_grandparent_level():
+    lines = {
+        "L001": line(line_id="L001", line_name="Root", sort_index=0),
+        "L002": line(line_id="L002", line_name="Child", parent_line_id="L001", sort_index=0),
+        "L003": line(line_id="L003", line_name="Grandchild", parent_line_id="L002", sort_index=0),
+    }
+    assert outdent_line(lines, "L003") is True
+    assert lines["L003"].parent_line_id == "L001"
+    numbers = compute_wbs_numbers(lines)
+    assert numbers["L001"] == "1"
+    assert numbers["L002"] == "1.1"
+    assert numbers["L003"] == "1.2"
+
+
+def test_outdent_root_is_noop():
+    lines = {"L001": line(line_id="L001", line_name="Root", sort_index=0)}
+    assert outdent_line(lines, "L001") is False
+    assert lines["L001"].parent_line_id is None
+
+
+def test_outdent_to_root_level():
+    lines = {
+        "L001": line(line_id="L001", line_name="Root", sort_index=0),
+        "L002": line(line_id="L002", line_name="Child", parent_line_id="L001", sort_index=0),
+    }
+    assert outdent_line(lines, "L002") is True
+    assert lines["L002"].parent_line_id is None
+    numbers = compute_wbs_numbers(lines)
+    assert numbers["L001"] == "1"
+    assert numbers["L002"] == "2"
+
+
+def test_indent_then_outdent_round_trip():
+    lines = {
+        "L001": line(line_id="L001", line_name="A", sort_index=0),
+        "L002": line(line_id="L002", line_name="B", sort_index=1),
+    }
+    indent_line(lines, "L002")
+    outdent_line(lines, "L002")
+    assert lines["L002"].parent_line_id is None
+    numbers = compute_wbs_numbers(lines)
+    assert numbers["L001"] == "1"
+    assert numbers["L002"] == "2"

@@ -23,7 +23,9 @@ from .models import (
 from .operations import (
     OperationError,
     cascade_delete_line,
+    indent_line,
     move_line,
+    outdent_line,
     reassign_children_and_delete_line,
     validate_new_parent,
 )
@@ -509,19 +511,32 @@ def remove_component(ctx, line_id, component_id, yes):
 
 @main.command("move-line")
 @click.argument("line_id")
-@click.argument("direction", type=click.Choice(["up", "down"]))
+@click.argument("direction", type=click.Choice(["up", "down", "indent", "outdent"]))
 @click.pass_context
 def move_line_cmd(ctx, line_id, direction):
-    """Move a line up or down among its siblings (changes its WBS number)."""
+    """Reposition a line: up/down among siblings, or indent/outdent a level.
+
+    up/down change sibling order. indent makes the line a child of its
+    preceding sibling; outdent makes it a sibling of its own parent. All
+    four change the line's auto-computed WBS number.
+    """
     lines = _load(ctx)
     _require_line(lines, line_id)
-    moved = move_line(lines, line_id, direction)
+    if direction in ("up", "down"):
+        moved = move_line(lines, line_id, direction)
+        cant = f"{line_id} is already at the {'top' if direction == 'up' else 'bottom'} of its siblings"
+    elif direction == "indent":
+        moved = indent_line(lines, line_id)
+        cant = f"{line_id} is already the first among its siblings - nothing to indent under"
+    else:
+        moved = outdent_line(lines, line_id)
+        cant = f"{line_id} is already a root line - nothing to outdent to"
     if not moved:
-        click.echo(f"{line_id} is already at the {'top' if direction == 'up' else 'bottom'} of its siblings")
+        click.echo(cant)
         return
     _save(ctx, lines)
     wbs = display_wbs(lines[line_id], compute_wbs_numbers(lines))
-    click.echo(f"Moved {line_id} {direction} (WBS {wbs})")
+    click.echo(f"Moved {line_id} ({direction}) (WBS {wbs})")
 
 
 # --------------------------------------------------------------------------

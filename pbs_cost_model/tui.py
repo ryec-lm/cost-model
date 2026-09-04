@@ -35,7 +35,9 @@ from .models import (
 from .operations import (
     OperationError,
     cascade_delete_line,
+    indent_line,
     move_line,
+    outdent_line,
     reassign_children_and_delete_line,
 )
 from .storage import JSONRepository, next_component_id, next_line_id, next_sort_index
@@ -157,6 +159,7 @@ class ComponentRow(Vertical):
 
     def compose(self) -> ComposeResult:
         comp = self._comp()
+        wbs_spacer = Static("", classes="wbs-cell")  # aligns with LineRow's WBS column; components aren't numbered
         indent = Static("")
         indent.styles.width = self.depth * 2 + 3
         id_label = Static(comp.component_id, classes="name-cell")
@@ -175,7 +178,7 @@ class ComponentRow(Vertical):
         method.field_key = "cost_method"
         method.field_owner = self
         yield Horizontal(
-            indent, id_label, cost_type, method, Static("", classes="cost-label"), classes="row-header"
+            wbs_spacer, indent, id_label, cost_type, method, Static("", classes="cost-label"), classes="row-header"
         )
         yield Vertical(*self._field_rows(comp), classes="fields")
 
@@ -281,7 +284,7 @@ class LineRow(Vertical):
         flag = Static("", classes="flag")
 
         yield Horizontal(
-            toggle, indent, wbs, name, method, Static("", classes="cost-label"), flag, classes="row-header"
+            wbs, toggle, indent, name, method, Static("", classes="cost-label"), flag, classes="row-header"
         )
         yield Vertical(*self._field_rows(line), classes="fields")
 
@@ -493,11 +496,13 @@ class PBSApp(App[None]):
     TITLE = "PBS Cost Model"
 
     CSS = """
+    #column-header { height: 1; background: $panel; }
+    .header-cell { text-style: bold; height: 1; background: $panel; }
     #table { height: 1fr; }
     .row { height: auto; width: 1fr; }
     .row-header { height: 1; width: 1fr; }
     .toggle-btn { width: 3; min-width: 3; height: 1; border: none; background: transparent; }
-    .wbs-cell { width: 10; color: $text-muted; }
+    .wbs-cell { width: 10; color: $text; text-style: bold; }
     .name-cell { width: 1fr; }
     .method-select { width: 22; }
     .cost-type-select { width: 16; }
@@ -533,11 +538,21 @@ class PBSApp(App[None]):
         Binding("escape", "escape_to_normal", "Back to row"),
         Binding("o", "add_line", "Add line"),
         Binding("ctrl+o", "add_root_line", "Add root line"),
-        Binding("shift+o", "add_component", "Add component"),
+        # A real keypress of Shift+O/K/J arrives as the plain uppercase
+        # character ("O"), not "shift+o" - terminals send the character a
+        # shifted key produces, not the key+modifier. Bind both spellings so
+        # this works regardless of how a given terminal reports it.
+        Binding("O,shift+o", "add_component", "Add component"),
         # "dd" (remove) has no single-key Binding - it's a genuine two-key
         # chord, handled in on_key below - Textual bindings map one key each.
-        Binding("shift+k", "move_up", "Move up"),
-        Binding("shift+j", "move_down", "Move down"),
+        Binding("K,shift+k", "move_up", "Move up"),
+        Binding("J,shift+j", "move_down", "Move down"),
+        # Textual's own Tab/Shift+Tab focus-cycling wins over an app Binding
+        # (Tab moves focus into the row's own fields instead), so indent uses
+        # vim's actual ">"/"<" instead - also more authentically vim than
+        # Tab would have been.
+        Binding("greater_than_sign", "indent", "Indent (>)"),
+        Binding("less_than_sign", "outdent", "Outdent (<)"),
         Binding("colon", "open_command_bar", "Command (:w, :e)"),
         Binding("v", "validate", "Validate"),
         Binding("x", "export", "Export CSV"),
@@ -557,6 +572,15 @@ class PBSApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Horizontal(
+            Static("WBS", classes="wbs-cell header-cell"),
+            Static("", classes="toggle-btn header-cell"),
+            Static("Name", classes="name-cell header-cell"),
+            Static("Method", classes="method-select header-cell"),
+            Static("Cost", classes="cost-label header-cell"),
+            Static("", classes="flag header-cell"),
+            id="column-header",
+        )
         yield VerticalScroll(id="table")
         yield TotalBar("", id="total-bar")
         yield Static("", id="status", markup=False)
@@ -748,6 +772,32 @@ class PBSApp(App[None]):
             self.save()
             await self.refresh_table(focus_line_id=line_id)
             self.set_status(f"Moved {line_id} {direction}")
+
+    @work
+    async def action_indent(self) -> None:
+        row = self._current_row()
+        if not isinstance(row, LineRow):
+            return
+        line_id = row.line_id
+        if indent_line(self.lines, line_id):
+            self.save()
+            await self.refresh_table(focus_line_id=line_id)
+            self.set_status(f"Indented {line_id}")
+        else:
+            self.set_status(f"{line_id} is already first among its siblings - nothing to indent under")
+
+    @work
+    async def action_outdent(self) -> None:
+        row = self._current_row()
+        if not isinstance(row, LineRow):
+            return
+        line_id = row.line_id
+        if outdent_line(self.lines, line_id):
+            self.save()
+            await self.refresh_table(focus_line_id=line_id)
+            self.set_status(f"Outdented {line_id}")
+        else:
+            self.set_status(f"{line_id} is already a root line - nothing to outdent to")
 
     def action_open_command_bar(self) -> None:
         if not isinstance(self.focused, (LineRow, ComponentRow)):

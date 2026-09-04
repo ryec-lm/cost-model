@@ -143,6 +143,10 @@ async def test_shift_o_adds_component_to_first_principles_line(tmp_path):
         line = app.lines["L001"]
         assert len(line.cost_components) == 1
         comp_row = _component_row(app, "L001", line.cost_components[0].component_id)
+        # "shift+o" should drop straight into editing the new component, like
+        # "o" does for a new line - not leave focus on the parent line.
+        assert app.focused is comp_row.query_one(".cost-type-select", Select)
+
         comp_row.query_one(".method-select", Select).value = "lump_sum"
         await pilot.pause()
         comp_row.query_one(".fields Select").value = "quote"
@@ -150,6 +154,41 @@ async def test_shift_o_adds_component_to_first_principles_line(tmp_path):
         await pilot.pause()
 
         assert app.calculator.calculate_line("L001").cost == 42.0
+
+
+async def test_add_component_expands_a_collapsed_line(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        row = _line_row(app, "L001")
+        row.query_one(".method-select", Select).value = "first_principles"
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        # add and then remove a component just to make the toggle appear,
+        # then add one more line as a child so the toggle has something to
+        # collapse, and collapse it
+        await pilot.press("o")  # child line under L001
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        _line_row(app, "L001").query_one(".toggle-btn", Button).press()
+        await pilot.pause()
+        assert "L001" in app.collapsed
+        assert len(list(app.query(LineRow))) == 1
+
+        _line_row(app, "L001").focus()
+        await pilot.pause()
+        await pilot.press("shift+o")
+        await pilot.pause()
+
+        line = app.lines["L001"]
+        assert len(line.cost_components) == 1
+        assert "L001" not in app.collapsed
+        assert _component_row(app, "L001", line.cost_components[0].component_id) is not None
 
 
 async def test_toggle_collapse_hides_children(tmp_path):

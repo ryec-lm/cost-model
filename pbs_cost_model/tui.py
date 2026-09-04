@@ -582,7 +582,12 @@ class PBSApp(App[None]):
             walk(root_id, 0)
         return rows
 
-    async def refresh_table(self, focus_line_id: Optional[str] = None, enter_edit: bool = False) -> None:
+    async def refresh_table(
+        self,
+        focus_line_id: Optional[str] = None,
+        focus_component_id: Optional[str] = None,
+        enter_edit: bool = False,
+    ) -> None:
         table = self.query_one("#table", VerticalScroll)
         await table.remove_children()
         row_widgets = []
@@ -596,7 +601,16 @@ class PBSApp(App[None]):
         self.refresh_costs()
 
         target = None
-        if focus_line_id is not None:
+        if focus_component_id is not None:
+            target = next(
+                (
+                    r
+                    for r in self.query(ComponentRow)
+                    if r.line_id == focus_line_id and r.component_id == focus_component_id
+                ),
+                None,
+            )
+        elif focus_line_id is not None:
             target = next((r for r in self.query(LineRow) if r.line_id == focus_line_id), None)
         if target is None and row_widgets:
             target = row_widgets[0]
@@ -700,7 +714,8 @@ class PBSApp(App[None]):
             CostComponent(component_id=component_id, cost_type=CostType.LABOR.value, cost_method=CostMethod.LUMP_SUM.value)
         )
         self.save()
-        await self.refresh_table(focus_line_id=line.line_id, enter_edit=True)
+        self.collapsed.discard(line.line_id)  # otherwise the new component would be hidden
+        await self.refresh_table(focus_line_id=line.line_id, focus_component_id=component_id, enter_edit=True)
         self.set_status(f"Added component {component_id} to line {line.line_id}")
 
     @work

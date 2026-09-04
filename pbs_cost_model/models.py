@@ -98,6 +98,15 @@ class PBSLine:
     parent_line_id: Optional[str] = None
     cost_method: Optional[str] = None
 
+    # Position among siblings (lower sorts first) - controls both display
+    # order and the auto-computed WBS number. Assigned at creation time via
+    # storage.next_sort_index() and changed only by operations.move_line().
+    sort_index: int = 0
+
+    # WBS number is auto-computed from tree position by default (see wbs.py);
+    # setting this pins an explicit value instead. Blank/None means "auto".
+    wbs_override: Optional[str] = None
+
     # lump_sum
     lump_sum_basis: Optional[str] = None
     amount: Optional[float] = None
@@ -137,7 +146,9 @@ def children_map(lines: PBSTree) -> Dict[Optional[str], List[str]]:
 
 
 def children_of(lines: PBSTree, line_id: str) -> List[str]:
-    return [l.line_id for l in lines.values() if l.parent_line_id == line_id]
+    kids = [l for l in lines.values() if l.parent_line_id == line_id]
+    kids.sort(key=lambda l: l.sort_index)
+    return [l.line_id for l in kids]
 
 
 def has_children(lines: PBSTree, line_id: str) -> bool:
@@ -169,4 +180,6 @@ def descendants_of(lines: PBSTree, line_id: str) -> List[str]:
 
 
 def root_lines(lines: PBSTree) -> List[str]:
-    return [l.line_id for l in lines.values() if l.parent_line_id is None]
+    roots = [l for l in lines.values() if l.parent_line_id is None]
+    roots.sort(key=lambda l: l.sort_index)
+    return [l.line_id for l in roots]

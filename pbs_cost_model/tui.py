@@ -35,10 +35,12 @@ from .models import (
 from .operations import (
     OperationError,
     cascade_delete_line,
+    move_line,
     reassign_children_and_delete_line,
 )
-from .storage import JSONRepository, next_component_id, next_line_id
+from .storage import JSONRepository, next_component_id, next_line_id, next_sort_index
 from .validation import validate_tree
+from .wbs import compute_wbs_numbers, display_wbs
 
 LUMP_SUM_BASES = ["quote", "historical", "analogous", "allowance"]
 LINE_METHOD_OPTIONS = [(m.value, m.value) for m in CostMethod] + [("none", "none")]
@@ -254,6 +256,14 @@ class LineRow(Vertical):
         else:
             toggle = Static("", classes="toggle-btn")
 
+        wbs = Input(
+            value=display_wbs(line, self.app_ref.wbs_numbers),
+            compact=True,
+            classes="wbs-cell",
+        )
+        wbs.field_key = "wbs_override"
+        wbs.field_owner = self
+
         name = Input(value=line.line_name, compact=True, classes="name-cell")
         name.field_key = "line_name"
         name.field_owner = self
@@ -271,7 +281,7 @@ class LineRow(Vertical):
         flag = Static("", classes="flag")
 
         yield Horizontal(
-            toggle, indent, name, method, Static("", classes="cost-label"), flag, classes="row-header"
+            toggle, indent, wbs, name, method, Static("", classes="cost-label"), flag, classes="row-header"
         )
         yield Vertical(*self._field_rows(line), classes="fields")
 
@@ -291,6 +301,15 @@ class LineRow(Vertical):
         label.set_class(not result.resolved, "-unresolved")
         flag = self.query_one(".flag", Static)
         flag.update("!" if result.leaf_equivalent_with_children else "")
+
+        wbs_input = self.query_one(".wbs-cell", Input)
+        computed = display_wbs(self._line(), self.app_ref.wbs_numbers)
+        if not wbs_input.has_focus and wbs_input.value != computed:
+            # Setting .value fires Input.Changed same as a real keystroke would;
+            # mark it so _input_changed doesn't treat this refresh as the user
+            # having typed the auto-computed number (which would pin it).
+            wbs_input._programmatic_update = True
+            wbs_input.value = computed
 
     def first_edit_target(self):
         return self.query_one(".name-cell", Input)
@@ -316,6 +335,9 @@ class LineRow(Vertical):
     @on(Input.Changed)
     def _input_changed(self, event: Input.Changed) -> None:
         event.stop()
+        if getattr(event.input, "_programmatic_update", False):
+            event.input._programmatic_update = False
+            return
         key = getattr(event.input, "field_key", None)
         if key is None:
             return
@@ -475,6 +497,7 @@ class PBSApp(App[None]):
     .row { height: auto; width: 1fr; }
     .row-header { height: 1; width: 1fr; }
     .toggle-btn { width: 3; min-width: 3; height: 1; border: none; background: transparent; }
+    .wbs-cell { width: 10; color: $text-muted; }
     .name-cell { width: 1fr; }
     .method-select { width: 22; }
     .cost-type-select { width: 16; }
@@ -491,6 +514,9 @@ class PBSApp(App[None]):
     .row:focus, .row:focus-within { border-left: thick $accent; }
     #total-bar { height: 1; background: $primary; color: $text; text-style: bold; padding: 0 2; }
     #status { height: 1; background: $panel; color: $text-muted; padding: 0 1; }
+    #command_bar { height: 1; display: none; background: $panel; }
+    .command-prefix { width: 2; padding-left: 1; color: $text; }
+    #command_input { width: 1fr; background: $panel; }
     """
 
     # Vim-style modal keys, not function keys (not every terminal passes those
@@ -506,9 +532,13 @@ class PBSApp(App[None]):
         Binding("i,enter", "enter_edit", "Edit field"),
         Binding("escape", "escape_to_normal", "Back to row"),
         Binding("o", "add_line", "Add line"),
+        Binding("ctrl+o", "add_root_line", "Add root line"),
         Binding("shift+o", "add_component", "Add component"),
         # "dd" (remove) has no single-key Binding - it's a genuine two-key
         # chord, handled in on_key below - Textual bindings map one key each.
+        Binding("shift+k", "move_up", "Move up"),
+        Binding("shift+j", "move_down", "Move down"),
+        Binding("colon", "open_command_bar", "Command (:w, :e)"),
         Binding("v", "validate", "Validate"),
         Binding("x", "export", "Export CSV"),
         Binding("r", "reload", "Reload"),
@@ -520,21 +550,29 @@ class PBSApp(App[None]):
         self.repo = JSONRepository(file_path)
         self.lines = self.repo.load()
         self.calculator = CostCalculator(self.lines)
+        self.wbs_numbers: dict = compute_wbs_numbers(self.lines)
         self.collapsed: set = set()
         self._pending_dd = False
+        self._pre_command_row = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield VerticalScroll(id="table")
         yield TotalBar("", id="total-bar")
         yield Static("", id="status", markup=False)
+        yield Horizontal(
+            Static(":", classes="command-prefix"),
+            Input(compact=True, id="command_input"),
+            id="command_bar",
+        )
         yield Footer()
 
     async def on_mount(self) -> None:
         await self.refresh_table()
         self.set_status(
             "vim-style: j/k move - i/Enter edit - Esc back to row - o add line - "
-            "O add component - dd remove - v validate - x export - r reload - q quit"
+            "O add component - dd remove - shift+j/k reorder - :w/:e save-as/load - "
+            "v validate - x export - r reload - q quit"
         )
 
     def on_key(self, event: events.Key) -> None:
@@ -621,6 +659,7 @@ class PBSApp(App[None]):
 
     def refresh_costs(self) -> None:
         self.calculator = CostCalculator(self.lines)
+        self.wbs_numbers = compute_wbs_numbers(self.lines)
         for row in self.query(LineRow):
             row.refresh_cost(self.calculator)
         for row in self.query(ComponentRow):
@@ -685,16 +724,115 @@ class PBSApp(App[None]):
             row.first_edit_target().focus()
 
     def action_escape_to_normal(self) -> None:
+        if self.focused is self.query_one("#command_input", Input):
+            self._close_command_bar()
+            return
         row = self._current_row()
         if row is not None:
             row.focus()
 
     @work
+    async def action_move_up(self) -> None:
+        await self._move_current_row("up")
+
+    @work
+    async def action_move_down(self) -> None:
+        await self._move_current_row("down")
+
+    async def _move_current_row(self, direction: str) -> None:
+        row = self._current_row()
+        if not isinstance(row, LineRow):
+            return
+        line_id = row.line_id
+        if move_line(self.lines, line_id, direction):
+            self.save()
+            await self.refresh_table(focus_line_id=line_id)
+            self.set_status(f"Moved {line_id} {direction}")
+
+    def action_open_command_bar(self) -> None:
+        if not isinstance(self.focused, (LineRow, ComponentRow)):
+            return  # only from normal mode - never steals ":" while typing
+        self._pre_command_row = self._current_row()
+        bar = self.query_one("#command_bar")
+        input_ = self.query_one("#command_input", Input)
+        self.query_one("#status", Static).display = False
+        input_.value = ""
+        input_.placeholder = "w [path] / e <path> / wq [path] / q"
+        bar.display = True
+        input_.focus()
+
+    def _close_command_bar(self) -> None:
+        bar = self.query_one("#command_bar")
+        input_ = self.query_one("#command_input", Input)
+        bar.display = False
+        input_.value = ""
+        self.query_one("#status", Static).display = True
+        if self._pre_command_row is not None:
+            self._pre_command_row.focus()
+        self._pre_command_row = None
+
+    @on(Input.Submitted, "#command_input")
+    async def _command_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        text = event.value
+        self._close_command_bar()
+        await self._run_command(text)
+
+    async def _run_command(self, text: str) -> None:
+        parts = text.strip().split(maxsplit=1)
+        if not parts:
+            return
+        cmd, arg = parts[0], (parts[1].strip() if len(parts) > 1 else "")
+        if cmd in ("w", "write"):
+            if arg:
+                self._save_as(arg)
+            else:
+                self.save()
+                self.set_status(f"Saved to {self.repo.path}")
+        elif cmd in ("e", "edit"):
+            if not arg:
+                self.set_status("Usage: :e <path>", error=True)
+                return
+            await self._load_file(arg)
+        elif cmd == "wq":
+            if arg:
+                self._save_as(arg)
+            else:
+                self.save()
+            self.exit()
+        elif cmd == "q":
+            self.exit()
+        else:
+            self.set_status(f"Unknown command ':{cmd}' (try :w, :e, :wq, :q)", error=True)
+
+    def _save_as(self, path: str) -> None:
+        self.repo = JSONRepository(path)
+        self.save()
+        self.set_status(f"Saved to {path}")
+
+    async def _load_file(self, path: str) -> None:
+        self.repo = JSONRepository(path)
+        self.lines = self.repo.load()
+        self.collapsed = set()
+        await self.refresh_table()
+        self.set_status(f"Loaded {path}")
+
+    @work
     async def action_add_line(self) -> None:
         row = self._current_row()
         parent = row.line_id if row is not None else None
+        await self._add_line(parent)
+
+    @work
+    async def action_add_root_line(self) -> None:
+        await self._add_line(None)
+
+    async def _add_line(self, parent: Optional[str]) -> None:
         line_id = next_line_id(self.lines)
-        self.lines[line_id] = PBSLine(line_id=line_id, line_name="", parent_line_id=parent)
+        sort_index = next_sort_index(self.lines, parent)
+        self.lines[line_id] = PBSLine(
+            line_id=line_id, line_name="", parent_line_id=parent, sort_index=sort_index
+        )
         self.save()
         await self.refresh_table(focus_line_id=line_id, enter_edit=True)
         self.set_status(f"Added line {line_id}")

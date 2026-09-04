@@ -1,5 +1,6 @@
 from textual.widgets import Button, Input, Select
 
+from pbs_cost_model.models import PBSLine
 from pbs_cost_model.storage import JSONRepository
 from pbs_cost_model.tui import ComponentRow, LineRow, PBSApp, TotalBar
 
@@ -290,3 +291,163 @@ async def test_validate_screen_opens_and_closes(tmp_path):
         app.screen.query_one("#close", Button).press()
         await pilot.pause()
         assert len(app.screen_stack) == 1
+
+
+async def test_wbs_column_shows_computed_number(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("o")  # child of L001
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert _line_row(app, "L001").query_one(".wbs-cell", Input).value == "1"
+        assert _line_row(app, "L002").query_one(".wbs-cell", Input).value == "1.1"
+
+
+async def test_wbs_override_pins_number_until_cleared(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        row = _line_row(app, "L001")
+        row.query_one(".wbs-cell", Input).value = "99.0"
+        await pilot.pause()
+        assert app.lines["L001"].wbs_override == "99.0"
+
+        await pilot.press("o")  # add a second line - should not disturb the pin
+        await pilot.pause()
+        assert _line_row(app, "L001").query_one(".wbs-cell", Input).value == "99.0"
+
+        _line_row(app, "L001").query_one(".wbs-cell", Input).value = ""
+        await pilot.pause()
+        assert app.lines["L001"].wbs_override is None
+
+
+async def test_add_root_line_via_ctrl_o(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")  # first line, always root (nothing focused yet)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("o")  # would nest under L001 if not for ctrl+o below
+        await pilot.pause()
+        assert app.lines["L002"].parent_line_id == "L001"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        _line_row(app, "L001").focus()
+        await pilot.pause()
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+
+        assert app.lines["L003"].parent_line_id is None
+        assert app.wbs_numbers["L003"] == "2"
+
+
+async def test_shift_j_k_reorder_siblings(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.wbs_numbers["L001"] == "1"
+        assert app.wbs_numbers["L002"] == "2"
+
+        _line_row(app, "L002").focus()
+        await pilot.pause()
+        await pilot.press("shift+k")
+        await pilot.pause()
+
+        assert app.wbs_numbers["L002"] == "1"
+        assert app.wbs_numbers["L001"] == "2"
+        assert app.focused.line_id == "L002"
+
+        await pilot.press("shift+j")
+        await pilot.pause()
+        assert app.wbs_numbers["L002"] == "2"
+        assert app.wbs_numbers["L001"] == "1"
+
+
+async def test_colon_w_saves_as_new_file(tmp_path):
+    original = tmp_path / "tree.json"
+    new_path = tmp_path / "snapshot.json"
+    app = PBSApp(str(original))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        row = _line_row(app, "L001")
+        row.query_one(".name-cell", Input).value = "Ballast"
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await pilot.press(":")
+        await pilot.pause()
+        bar = app.query_one("#command_input", Input)
+        assert app.focused is bar
+        bar.value = f"w {new_path}"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert str(app.repo.path) == str(new_path)
+        assert not app.query_one("#command_bar").display
+
+    reloaded = JSONRepository(new_path).load()
+    assert reloaded["L001"].line_name == "Ballast"
+
+
+async def test_colon_e_loads_a_different_file(tmp_path):
+    other = tmp_path / "other.json"
+    other_lines = {"L001": PBSLine(line_id="L001", line_name="From other file")}
+    JSONRepository(other).save(other_lines)
+
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await pilot.press(":")
+        await pilot.pause()
+        bar = app.query_one("#command_input", Input)
+        bar.value = f"e {other}"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.lines["L001"].line_name == "From other file"
+        assert str(app.repo.path) == str(other)
+
+
+async def test_escape_closes_command_bar_without_running_it(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await pilot.press(":")
+        await pilot.pause()
+        bar = app.query_one("#command_input", Input)
+        bar.value = "q"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not app.query_one("#command_bar").display
+        assert app.focused is _line_row(app, "L001")

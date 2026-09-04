@@ -48,3 +48,25 @@ def reassign_children_and_delete_line(
     for kid in children_of(lines, line_id):
         lines[kid].parent_line_id = new_parent
     lines.pop(line_id, None)
+
+
+def move_line(lines: PBSTree, line_id: str, direction: str) -> bool:
+    """Move a line up or down among its siblings (changes WBS position).
+
+    Returns True if it moved, False if it was already at that edge of its
+    sibling group (a no-op, not an error).
+    """
+    if direction not in ("up", "down"):
+        raise OperationError(f"invalid direction '{direction}'")
+    line = lines[line_id]
+    siblings = children_of(lines, line.parent_line_id)
+    index = siblings.index(line_id)
+    neighbor_index = index - 1 if direction == "up" else index + 1
+    if neighbor_index < 0 or neighbor_index >= len(siblings):
+        return False
+    neighbor_id = siblings[neighbor_index]
+    lines[line_id].sort_index, lines[neighbor_id].sort_index = (
+        lines[neighbor_id].sort_index,
+        lines[line_id].sort_index,
+    )
+    return True

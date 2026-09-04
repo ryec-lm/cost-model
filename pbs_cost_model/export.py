@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Union
 
 from .calc import CostCalculator
-from .models import PBSTree, confidence_for_basis
+from .models import PBSTree, children_of, confidence_for_basis, root_lines
+from .wbs import compute_wbs_numbers, display_wbs
 
 FIELDNAMES = [
     "row_type",
+    "wbs",
     "line_id",
     "parent_line_id",
     "line_name",
@@ -36,13 +38,16 @@ FIELDNAMES = [
 def export_csv(lines: PBSTree, path: Union[str, Path]) -> None:
     calculator = CostCalculator(lines)
     results = calculator.calculate_all()
+    wbs_numbers = compute_wbs_numbers(lines)
     rows = []
 
-    for line_id, line in lines.items():
+    def visit(line_id: str) -> None:
+        line = lines[line_id]
         result = results.get(line_id)
         rows.append(
             {
                 "row_type": "line",
+                "wbs": display_wbs(line, wbs_numbers),
                 "line_id": line.line_id,
                 "parent_line_id": line.parent_line_id or "",
                 "line_name": line.line_name,
@@ -64,6 +69,7 @@ def export_csv(lines: PBSTree, path: Union[str, Path]) -> None:
             rows.append(
                 {
                     "row_type": "component",
+                    "wbs": "",
                     "line_id": line.line_id,
                     "parent_line_id": line.parent_line_id or "",
                     "line_name": line.line_name,
@@ -86,6 +92,11 @@ def export_csv(lines: PBSTree, path: Union[str, Path]) -> None:
                     "reason": comp_result.reason or "",
                 }
             )
+        for child_id in children_of(lines, line_id):
+            visit(child_id)
+
+    for root_id in root_lines(lines):
+        visit(root_id)
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

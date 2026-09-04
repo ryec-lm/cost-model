@@ -34,6 +34,16 @@ line: its own cost_method total is used, and children are NOT rolled into
 it.** `show-tree`, `show-line`, and `validate` all flag this combination
 so it's never silent.
 
+**WBS numbers** (1, 1.1, 1.2, 1.2.1, 2, ...) are derived automatically from
+each line's position in the tree - depth plus order among siblings - so
+they're never stored and always stay correct as you add, remove, or
+reorder lines. Order among siblings is controlled by `sort_index` (a new
+line is appended last; `move-line`/`shift+k`/`shift+j` swap a line with
+its neighbor). Set `wbs_override` on a line (`--wbs` on the CLI, or just
+type into the WBS cell in the TUI) to pin an explicit number instead;
+clearing it (`--clear-wbs`, or blanking the TUI cell) goes back to
+auto-numbering.
+
 **Cost components** live only under `first_principles` lines. Each has a
 `cost_type` (labor/material/equipment/shipping/subcontract) and its own
 `cost_method` (`lump_sum`, `parametric`, or `percentage` - `first_principles`
@@ -59,13 +69,22 @@ pbs [-f FILE] add-component  LINE_ID  [--cost-type] [--cost-method] [method-spec
 pbs [-f FILE] edit-component LINE_ID COMPONENT_ID [same flags as add-component]
 pbs [-f FILE] remove-line    LINE_ID  [--yes] [--cascade | --reassign-to PARENT_ID]
 pbs [-f FILE] remove-component LINE_ID COMPONENT_ID [--yes]
+pbs [-f FILE] move-line      LINE_ID  up|down
 pbs [-f FILE] show-tree      [LINE_ID]
 pbs [-f FILE] show-line      LINE_ID
 pbs [-f FILE] calc           [LINE_ID]
 pbs [-f FILE] validate
 pbs [-f FILE] export         OUTPUT.csv
+pbs [-f FILE] save-as        NEW_FILE
 pbs [-f FILE] tui
 ```
+
+`add-line`/`edit-line` also take `--wbs WBS_NUMBER` to pin a WBS override
+(`edit-line` also takes `--clear-wbs` to go back to auto-numbering).
+`show-tree`, `show-line`, and `export` all include the WBS number.
+`save-as` writes the current tree to a different JSON file - the CLI has
+no notion of "the open file" the way the TUI does, so this is really just
+load-then-save-elsewhere, useful for snapshots (`estimate_v2.json`).
 
 Run any command with `--help` for its full flag list.
 
@@ -98,8 +117,11 @@ mid-edit:
 | `i` / `Enter` | Start editing the focused row's first field (insert mode) |
 | `Escape` | Back to normal mode (focus returns to the row) |
 | `o` | Add line (as a child of the focused row, or a root line if none focused) - also drops into insert mode on the new row, like vim's `o` |
+| `Ctrl+o` | Add a root-level line regardless of what's focused (since `o` always nests under the focused row) |
 | `Shift+o` | Add component (focused line must be `first_principles`) |
 | `dd` | Remove the focused line or component (press `d` twice, like vim's delete-line) |
+| `Shift+k` / `Shift+j` | Move the focused line up/down among its siblings (changes its WBS number) |
+| `:` | Open a command line for `:w [path]`, `:e <path>`, `:wq [path]`, `:q` |
 | `v` | Validate |
 | `x` | Export to CSV |
 | `r` | Reload from disk |
@@ -108,11 +130,22 @@ mid-edit:
 Click a line's `v`/`>` toggle (mouse only, for now) to collapse/expand its
 children, including a `first_principles` line's components. Mouse clicks
 always work for editing too - clicking any field jumps straight into
-editing it, same as `i`/`Enter`.
+editing it, same as `i`/`Enter`. The WBS cell is just another editable
+field: it shows the auto-computed number, and typing over it pins an
+override (blank it to go back to auto).
 
 This borrows vim's normal/insert-mode split and its most iconic verbs
-(`o`, `dd`), not the full command grammar - there's no `:` command line,
-operator+motion combos (`dw`, `d$`, ...), or count prefixes.
+(`o`, `dd`), not the full command grammar - no operator+motion combos
+(`dw`, `d$`, ...) or count prefixes. The one exception is a minimal `:`
+command line, since `:w`/`:e` map so directly onto save-as/load:
+
+- `:w` saves to the current file (redundant with autosave, but harmless);
+  `:w path/to/file.json` saves as a *different* file and switches to it -
+  further edits autosave there instead of the original.
+- `:e path/to/file.json` loads a different file into the session, replacing
+  what's currently open (whatever was open was already saved - autosave -
+  so nothing is lost).
+- `:wq [path]` does `:w` then quits; `:q` quits.
 
 It reads and writes the same JSON file as the CLI (`-f/--file` still
 applies), so you can freely mix `pbs tui` with individual `pbs` commands
@@ -154,6 +187,10 @@ pbs show-tree
 pbs calc
 pbs validate
 pbs export estimate.csv
+
+pbs move-line L003 up          # Ballast before Track Structure -> WBS renumbers
+pbs edit-line L004 --wbs 99.0  # pin Design & Engineering to a fixed number
+pbs save-as estimate_v2.json   # snapshot to a new file
 ```
 
 ## Tests

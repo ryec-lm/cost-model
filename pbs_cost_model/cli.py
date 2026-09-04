@@ -23,11 +23,13 @@ from .models import (
 from .operations import (
     OperationError,
     cascade_delete_line,
+    move_line,
     reassign_children_and_delete_line,
     validate_new_parent,
 )
-from .storage import JSONRepository, next_component_id, next_line_id
+from .storage import JSONRepository, next_component_id, next_line_id, next_sort_index
 from .validation import validate_tree
+from .wbs import compute_wbs_numbers, display_wbs
 
 METHOD_CHOICES = [m.value for m in CostMethod] + ["none"]
 COMPONENT_METHOD_CHOICES = [m.value for m in CostMethod if m != CostMethod.FIRST_PRINCIPLES]
@@ -115,8 +117,9 @@ def _apply_method_attrs(line: PBSLine, method: Optional[str], opts: dict, intera
 @click.option("--unit-rate", type=float)
 @click.option("--basis-line", "basis_line_ref", help="line_id this percentage is based on.")
 @click.option("--rate", "percentage_rate", type=float, help="Percentage rate as a decimal (0.05 = 5%).")
+@click.option("--wbs", "wbs_override", help="Pin an explicit WBS number instead of auto-numbering.")
 @click.pass_context
-def add_line(ctx, name, parent_line_id, cost_method, **method_opts):
+def add_line(ctx, name, parent_line_id, cost_method, wbs_override, **method_opts):
     """Add a new PBS line."""
     lines = _load(ctx)
     interactive = _is_interactive()
@@ -140,12 +143,21 @@ def add_line(ctx, name, parent_line_id, cost_method, **method_opts):
     cost_method = None if cost_method == "none" else cost_method
 
     line_id = next_line_id(lines)
-    line = PBSLine(line_id=line_id, line_name=name, parent_line_id=parent_line_id, cost_method=cost_method)
+    sort_index = next_sort_index(lines, parent_line_id)
+    line = PBSLine(
+        line_id=line_id,
+        line_name=name,
+        parent_line_id=parent_line_id,
+        cost_method=cost_method,
+        sort_index=sort_index,
+        wbs_override=wbs_override,
+    )
     _apply_method_attrs(line, cost_method, method_opts, interactive)
 
     lines[line_id] = line
     _save(ctx, lines)
-    click.echo(f"Added line {line_id}: {name}")
+    wbs = display_wbs(line, compute_wbs_numbers(lines))
+    click.echo(f"Added line {line_id} (WBS {wbs}): {name}")
 
 
 @main.command("edit-line")
@@ -161,14 +173,18 @@ def add_line(ctx, name, parent_line_id, cost_method, **method_opts):
 @click.option("--unit-rate", type=float)
 @click.option("--basis-line", "basis_line_ref")
 @click.option("--rate", "percentage_rate", type=float)
+@click.option("--wbs", "wbs_override", help="Pin an explicit WBS number instead of auto-numbering.")
+@click.option("--clear-wbs", is_flag=True, help="Go back to auto-numbering for this line's WBS.")
 @click.pass_context
-def edit_line(ctx, line_id, name, parent_line_id, cost_method, clear_cost_method, **method_opts):
+def edit_line(ctx, line_id, name, parent_line_id, cost_method, clear_cost_method, wbs_override, clear_wbs, **method_opts):
     """Modify an existing line's attributes."""
     lines = _load(ctx)
     line = _require_line(lines, line_id)
 
-    any_flag = clear_cost_method or any(
-        v is not None for v in [name, parent_line_id, cost_method, *method_opts.values()]
+    any_flag = (
+        clear_cost_method
+        or clear_wbs
+        or any(v is not None for v in [name, parent_line_id, cost_method, wbs_override, *method_opts.values()])
     )
 
     if not any_flag:
@@ -182,6 +198,13 @@ def edit_line(ctx, line_id, name, parent_line_id, cost_method, clear_cost_method
             new_parent = parent_line_id or None
             _validate_new_parent(lines, line_id, new_parent)
             line.parent_line_id = new_parent
+            line.sort_index = next_sort_index(
+                {k: v for k, v in lines.items() if k != line_id}, new_parent
+            )
+        if clear_wbs:
+            line.wbs_override = None
+        elif wbs_override is not None:
+            line.wbs_override = wbs_override
         if clear_cost_method:
             line.cost_method = None
         elif cost_method is not None:
@@ -202,7 +225,8 @@ def edit_line(ctx, line_id, name, parent_line_id, cost_method, clear_cost_method
             line.percentage_rate = method_opts["percentage_rate"]
 
     _save(ctx, lines)
-    click.echo(f"Updated line {line_id}")
+    wbs = display_wbs(line, compute_wbs_numbers(lines))
+    click.echo(f"Updated line {line_id} (WBS {wbs})")
 
 
 def _validate_new_parent(lines, line_id: str, new_parent: Optional[str]) -> None:
@@ -218,8 +242,17 @@ def _interactive_edit_line(lines, line: PBSLine) -> None:
         "Parent line_id (blank for root)", default=line.parent_line_id or "", show_default=False
     )
     new_parent = new_parent or None
-    _validate_new_parent(lines, line.line_id, new_parent)
-    line.parent_line_id = new_parent
+    if new_parent != line.parent_line_id:
+        _validate_new_parent(lines, line.line_id, new_parent)
+        line.parent_line_id = new_parent
+        line.sort_index = next_sort_index(
+            {k: v for k, v in lines.items() if k != line.line_id}, new_parent
+        )
+
+    wbs_override = click.prompt(
+        "WBS override (blank for auto-numbering)", default=line.wbs_override or "", show_default=False
+    )
+    line.wbs_override = wbs_override or None
 
     method = click.prompt(
         "Cost method",
@@ -470,6 +503,28 @@ def remove_component(ctx, line_id, component_id, yes):
 
 
 # --------------------------------------------------------------------------
+# move-line
+# --------------------------------------------------------------------------
+
+
+@main.command("move-line")
+@click.argument("line_id")
+@click.argument("direction", type=click.Choice(["up", "down"]))
+@click.pass_context
+def move_line_cmd(ctx, line_id, direction):
+    """Move a line up or down among its siblings (changes its WBS number)."""
+    lines = _load(ctx)
+    _require_line(lines, line_id)
+    moved = move_line(lines, line_id, direction)
+    if not moved:
+        click.echo(f"{line_id} is already at the {'top' if direction == 'up' else 'bottom'} of its siblings")
+        return
+    _save(ctx, lines)
+    wbs = display_wbs(lines[line_id], compute_wbs_numbers(lines))
+    click.echo(f"Moved {line_id} {direction} (WBS {wbs})")
+
+
+# --------------------------------------------------------------------------
 # show-tree / show-line
 # --------------------------------------------------------------------------
 
@@ -502,20 +557,22 @@ def show_tree(ctx, line_id):
         roots = root_lines(lines)
 
     calculator = CostCalculator(lines)
+    wbs_numbers = compute_wbs_numbers(lines)
     for root in roots:
-        _print_line(lines, calculator, root, depth=0)
+        _print_line(lines, calculator, wbs_numbers, root, depth=0)
 
 
-def _print_line(lines, calculator: CostCalculator, line_id: str, depth: int) -> None:
+def _print_line(lines, calculator: CostCalculator, wbs_numbers, line_id: str, depth: int) -> None:
     line = lines[line_id]
     result = calculator.calculate_line(line_id)
     indent = "  " * depth
     flag = "  [!] has children, not rolled up" if result.leaf_equivalent_with_children else ""
+    wbs = display_wbs(line, wbs_numbers)
     click.echo(
-        f"{indent}{line_id} [{_method_tag(result)}] {line.line_name} - {_format_cost(result)}{flag}"
+        f"{indent}{wbs}  {line_id} [{_method_tag(result)}] {line.line_name} - {_format_cost(result)}{flag}"
     )
     for child_id in children_of(lines, line_id):
-        _print_line(lines, calculator, child_id, depth + 1)
+        _print_line(lines, calculator, wbs_numbers, child_id, depth + 1)
 
 
 @main.command("show-line")
@@ -527,8 +584,10 @@ def show_line(ctx, line_id):
     line = _require_line(lines, line_id)
     calculator = CostCalculator(lines)
     result = calculator.calculate_line(line_id)
+    wbs = display_wbs(line, compute_wbs_numbers(lines))
 
     click.echo(f"line_id:          {line.line_id}")
+    click.echo(f"wbs:              {wbs}{' (pinned)' if line.wbs_override else ''}")
     click.echo(f"line_name:        {line.line_name}")
     click.echo(f"parent_line_id:   {line.parent_line_id or '(root)'}")
     click.echo(f"cost_method:      {line.cost_method or '(none - rollup)'}")
@@ -652,6 +711,21 @@ def export_cmd(ctx, output_path):
     lines = _load(ctx)
     export_csv(lines, output_path)
     click.echo(f"Exported {len(lines)} line(s) to {output_path}")
+
+
+# --------------------------------------------------------------------------
+# save-as
+# --------------------------------------------------------------------------
+
+
+@main.command("save-as")
+@click.argument("new_file")
+@click.pass_context
+def save_as_cmd(ctx, new_file):
+    """Save the current tree to a different JSON file (a copy/snapshot)."""
+    lines = _load(ctx)
+    JSONRepository(new_file).save(lines)
+    click.echo(f"Saved {len(lines)} line(s) to {new_file}")
 
 
 # --------------------------------------------------------------------------

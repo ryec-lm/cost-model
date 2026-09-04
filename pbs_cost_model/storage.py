@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from .models import PBSLine, PBSTree
 
@@ -55,6 +55,12 @@ def next_line_id(lines: PBSTree) -> str:
     while f"L{n:03d}" in lines:
         n += 1
     return f"L{n:03d}"
+
+
+def next_sort_index(lines: PBSTree, parent_line_id: Optional[str]) -> int:
+    """Sort index that places a new line last among its siblings."""
+    siblings = [l.sort_index for l in lines.values() if l.parent_line_id == parent_line_id]
+    return max(siblings, default=-1) + 1
 
 
 def next_component_id(line: PBSLine) -> str:

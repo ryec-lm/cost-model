@@ -73,19 +73,32 @@ Run any command with `--help` for its full flag list.
 
 `pbs tui` launches a persistent, full-screen terminal app (built on
 [Textual](https://textual.textualize.io/)) instead of one-shot commands:
-a navigable tree on the left with a live detail panel on the right, and
-key-bound actions for everything the CLI does.
+a single scrollable, always-editable table - one row per line (indented by
+depth) or cost_component (nested under its first_principles line) - with a
+totals bar pinned at the bottom. There are no popup edit forms: pick a row's
+cost method from its dropdown and the row grows downward in place to reveal
+exactly the fields that method needs (e.g. picking `parametric` reveals
+Quantity/Unit/Rate right below the row); every field commits as you type or
+select, and the tree/totals recompute live. Modals are used only for the
+rare, destructive/report actions: removing a line with children, validate,
+and export.
+
+Rows are edited with the mouse/Tab like any form, and actions are bound to
+function keys rather than letters - a plain letter would just get typed
+into whatever field has focus:
 
 | Key | Action |
 | --- | --- |
-| `a` | Add line (as a child of the selected line, or a root line if none selected) |
-| `shift+a` | Add component (selected line must be `first_principles`) |
-| `e` | Edit the selected line or component |
-| `d` | Remove the selected line or component |
-| `v` | Validate |
-| `x` | Export to CSV |
-| `r` | Reload from disk |
-| `q` | Quit |
+| `F2` | Add line (as a child of the selected row, or a root line if none selected) |
+| `F3` | Add component (selected line must be `first_principles`) |
+| `F4` | Remove the selected line or component |
+| `F5` | Validate |
+| `F6` | Export to CSV |
+| `F7` | Reload from disk |
+| `F10` | Quit |
+
+Click a line's `v`/`>` toggle to collapse/expand its children (and, for a
+`first_principles` line, its components).
 
 It reads and writes the same JSON file as the CLI (`-f/--file` still
 applies), so you can freely mix `pbs tui` with individual `pbs` commands

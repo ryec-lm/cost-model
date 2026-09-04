@@ -140,6 +140,8 @@ class TotalBar(Static):
 class ComponentRow(Vertical):
     """One cost_component row, nested under its first_principles line."""
 
+    can_focus = True
+
     def __init__(self, app_ref: "PBSApp", line_id: str, component_id: str, depth: int):
         super().__init__(classes="row component-row")
         self.app_ref = app_ref
@@ -192,6 +194,9 @@ class ComponentRow(Vertical):
         label.update(_format_cost(result.resolved, result.cost))
         label.set_class(not result.resolved, "-unresolved")
 
+    def first_edit_target(self):
+        return self.query_one(".cost-type-select", Select)
+
     @on(Select.Changed)
     async def _select_changed(self, event: Select.Changed) -> None:
         event.stop()
@@ -217,13 +222,12 @@ class ComponentRow(Vertical):
             setattr(comp, key, event.value.strip() or None)
         self.app_ref.on_data_changed()
 
-    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        self.app_ref.selected_row = self
-
 
 class LineRow(Vertical):
     """One PBS line row, with children (lines and components) as sibling
     rows below it in the flattened table, indented further."""
+
+    can_focus = True
 
     def __init__(self, app_ref: "PBSApp", line_id: str, depth: int):
         super().__init__(classes="row line-row")
@@ -288,6 +292,9 @@ class LineRow(Vertical):
         flag = self.query_one(".flag", Static)
         flag.update("!" if result.leaf_equivalent_with_children else "")
 
+    def first_edit_target(self):
+        return self.query_one(".name-cell", Input)
+
     @on(Button.Pressed, ".toggle-btn")
     async def _toggle_pressed(self) -> None:
         await self.app_ref.toggle_collapse(self.line_id)
@@ -320,9 +327,6 @@ class LineRow(Vertical):
         else:
             setattr(line, key, event.value.strip() or None)
         self.app_ref.on_data_changed()
-
-    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        self.app_ref.selected_row = self
 
 
 # --------------------------------------------------------------------------
@@ -484,21 +488,31 @@ class PBSApp(App[None]):
     Input, Select { background: $panel-lighten-1; }
     Input:focus, Select:focus { background: $boost; }
     .component-row .name-cell { color: $text-muted; }
+    .row:focus, .row:focus-within { border-left: thick $accent; }
     #total-bar { height: 1; background: $primary; color: $text; text-style: bold; padding: 0 2; }
     #status { height: 1; background: $panel; color: $text-muted; padding: 0 1; }
     """
 
-    # Function keys, not single letters: every row is an editable text field,
-    # so a plain letter binding like "a" would be swallowed as a keystroke by
-    # whichever Input currently has focus instead of triggering the action.
+    # Vim-style modal keys, not function keys (not every terminal passes those
+    # through) and not plain letters alone: a row is focused as a whole in
+    # "normal mode" (j/k move between rows, letters are commands), and moves
+    # into "insert mode" - editing a field, where letters type normally - via
+    # i/Enter; Escape moves focus back to the row ("normal mode" again). This
+    # only works because Input/Select swallow every printable key while they
+    # themselves hold focus, so these bindings never fire mid-edit.
     BINDINGS = [
-        Binding("f2", "add_line", "Add line"),
-        Binding("f3", "add_component", "Add component"),
-        Binding("f4", "remove_selected", "Remove"),
-        Binding("f5", "validate", "Validate"),
-        Binding("f6", "export", "Export CSV"),
-        Binding("f7", "reload", "Reload"),
-        Binding("f10", "quit", "Quit"),
+        Binding("j,down", "cursor_down", "Down", show=False),
+        Binding("k,up", "cursor_up", "Up", show=False),
+        Binding("i,enter", "enter_edit", "Edit field"),
+        Binding("escape", "escape_to_normal", "Back to row"),
+        Binding("o", "add_line", "Add line"),
+        Binding("shift+o", "add_component", "Add component"),
+        # "dd" (remove) has no single-key Binding - it's a genuine two-key
+        # chord, handled in on_key below - Textual bindings map one key each.
+        Binding("v", "validate", "Validate"),
+        Binding("x", "export", "Export CSV"),
+        Binding("r", "reload", "Reload"),
+        Binding("q", "quit", "Quit"),
     ]
 
     def __init__(self, file_path: Union[str, Path]):
@@ -507,7 +521,7 @@ class PBSApp(App[None]):
         self.lines = self.repo.load()
         self.calculator = CostCalculator(self.lines)
         self.collapsed: set = set()
-        self.selected_row = None
+        self._pending_dd = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -518,6 +532,21 @@ class PBSApp(App[None]):
 
     async def on_mount(self) -> None:
         await self.refresh_table()
+        self.set_status(
+            "vim-style: j/k move - i/Enter edit - Esc back to row - o add line - "
+            "O add component - dd remove - v validate - x export - r reload - q quit"
+        )
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "d" and isinstance(self.focused, (LineRow, ComponentRow)):
+            if self._pending_dd:
+                self._pending_dd = False
+                event.stop()
+                self.action_remove_selected()
+            else:
+                self._pending_dd = True
+        else:
+            self._pending_dd = False
 
     # -- persistence -------------------------------------------------
 
@@ -553,7 +582,7 @@ class PBSApp(App[None]):
             walk(root_id, 0)
         return rows
 
-    async def refresh_table(self, focus_line_id: Optional[str] = None) -> None:
+    async def refresh_table(self, focus_line_id: Optional[str] = None, enter_edit: bool = False) -> None:
         table = self.query_one("#table", VerticalScroll)
         await table.remove_children()
         row_widgets = []
@@ -565,11 +594,16 @@ class PBSApp(App[None]):
         if row_widgets:
             await table.mount_all(row_widgets)
         self.refresh_costs()
+
+        target = None
         if focus_line_id is not None:
-            for candidate in self.query(LineRow):
-                if candidate.line_id == focus_line_id:
-                    candidate.query_one(".name-cell", Input).focus()
-                    break
+            target = next((r for r in self.query(LineRow) if r.line_id == focus_line_id), None)
+        if target is None and row_widgets:
+            target = row_widgets[0]
+        if target is not None:
+            target.first_edit_target().focus() if enter_edit else target.focus()
+        else:
+            table.focus()
 
     def refresh_costs(self) -> None:
         self.calculator = CostCalculator(self.lines)
@@ -601,23 +635,59 @@ class PBSApp(App[None]):
 
     # -- actions ------------------------------------------------
 
+    def _current_row(self):
+        """The row a command should act on: the focused row itself (normal
+        mode), or the row owning the focused field (mid-edit)."""
+        focused = self.focused
+        if isinstance(focused, (LineRow, ComponentRow)):
+            return focused
+        owner = getattr(focused, "field_owner", None)
+        if isinstance(owner, (LineRow, ComponentRow)):
+            return owner
+        return None
+
+    def _row_widgets(self):
+        return list(self.query(".row"))
+
+    def action_cursor_down(self) -> None:
+        rows = self._row_widgets()
+        if not rows:
+            return
+        current = self._current_row()
+        index = rows.index(current) + 1 if current in rows else 0
+        rows[min(index, len(rows) - 1)].focus()
+
+    def action_cursor_up(self) -> None:
+        rows = self._row_widgets()
+        if not rows:
+            return
+        current = self._current_row()
+        index = rows.index(current) - 1 if current in rows else 0
+        rows[max(index, 0)].focus()
+
+    def action_enter_edit(self) -> None:
+        row = self._current_row()
+        if row is not None and isinstance(self.focused, (LineRow, ComponentRow)):
+            row.first_edit_target().focus()
+
+    def action_escape_to_normal(self) -> None:
+        row = self._current_row()
+        if row is not None:
+            row.focus()
+
     @work
     async def action_add_line(self) -> None:
-        parent = None
-        row = self.selected_row
-        if isinstance(row, LineRow):
-            parent = row.line_id
-        elif isinstance(row, ComponentRow):
-            parent = row.line_id
+        row = self._current_row()
+        parent = row.line_id if row is not None else None
         line_id = next_line_id(self.lines)
         self.lines[line_id] = PBSLine(line_id=line_id, line_name="", parent_line_id=parent)
         self.save()
-        await self.refresh_table(focus_line_id=line_id)
+        await self.refresh_table(focus_line_id=line_id, enter_edit=True)
         self.set_status(f"Added line {line_id}")
 
     @work
     async def action_add_component(self) -> None:
-        row = self.selected_row
+        row = self._current_row()
         if not isinstance(row, LineRow):
             self.set_status("Select a first_principles line first", error=True)
             return
@@ -630,12 +700,12 @@ class PBSApp(App[None]):
             CostComponent(component_id=component_id, cost_type=CostType.LABOR.value, cost_method=CostMethod.LUMP_SUM.value)
         )
         self.save()
-        await self.refresh_table(focus_line_id=line.line_id)
+        await self.refresh_table(focus_line_id=line.line_id, enter_edit=True)
         self.set_status(f"Added component {component_id} to line {line.line_id}")
 
     @work
     async def action_remove_selected(self) -> None:
-        row = self.selected_row
+        row = self._current_row()
         if row is None:
             self.set_status("Select a line or component first", error=True)
             return

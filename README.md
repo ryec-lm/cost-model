@@ -83,22 +83,36 @@ select, and the tree/totals recompute live. Modals are used only for the
 rare, destructive/report actions: removing a line with children, validate,
 and export.
 
-Rows are edited with the mouse/Tab like any form, and actions are bound to
-function keys rather than letters - a plain letter would just get typed
-into whatever field has focus:
+Navigation is modal, vim-style, rather than function keys (not every
+terminal passes those through) or plain letters (a letter binding would
+just get typed into whatever field has focus). A row is focused as a
+whole in **normal mode** - letters are commands - and moves into
+**insert mode**, editing one of its fields, via `i`/`Enter`; `Escape`
+moves focus back to the row. This works because Input/Select swallow
+every printable key while they hold focus, so these bindings never fire
+mid-edit:
 
 | Key | Action |
 | --- | --- |
-| `F2` | Add line (as a child of the selected row, or a root line if none selected) |
-| `F3` | Add component (selected line must be `first_principles`) |
-| `F4` | Remove the selected line or component |
-| `F5` | Validate |
-| `F6` | Export to CSV |
-| `F7` | Reload from disk |
-| `F10` | Quit |
+| `j` / `k` (or `↓`/`↑`) | Move to the next/previous row (normal mode) |
+| `i` / `Enter` | Start editing the focused row's first field (insert mode) |
+| `Escape` | Back to normal mode (focus returns to the row) |
+| `o` | Add line (as a child of the focused row, or a root line if none focused) - also drops into insert mode on the new row, like vim's `o` |
+| `Shift+o` | Add component (focused line must be `first_principles`) |
+| `dd` | Remove the focused line or component (press `d` twice, like vim's delete-line) |
+| `v` | Validate |
+| `x` | Export to CSV |
+| `r` | Reload from disk |
+| `q` | Quit |
 
-Click a line's `v`/`>` toggle to collapse/expand its children (and, for a
-`first_principles` line, its components).
+Click a line's `v`/`>` toggle (mouse only, for now) to collapse/expand its
+children, including a `first_principles` line's components. Mouse clicks
+always work for editing too - clicking any field jumps straight into
+editing it, same as `i`/`Enter`.
+
+This borrows vim's normal/insert-mode split and its most iconic verbs
+(`o`, `dd`), not the full command grammar - there's no `:` command line,
+operator+motion combos (`dw`, `d$`, ...), or count prefixes.
 
 It reads and writes the same JSON file as the CLI (`-f/--file` still
 applies), so you can freely mix `pbs tui` with individual `pbs` commands

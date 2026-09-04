@@ -18,8 +18,13 @@ from .models import (
     RefType,
     children_of,
     confidence_for_basis,
-    descendants_of,
     root_lines,
+)
+from .operations import (
+    OperationError,
+    cascade_delete_line,
+    reassign_children_and_delete_line,
+    validate_new_parent,
 )
 from .storage import JSONRepository, next_component_id, next_line_id
 from .validation import validate_tree
@@ -201,17 +206,10 @@ def edit_line(ctx, line_id, name, parent_line_id, cost_method, clear_cost_method
 
 
 def _validate_new_parent(lines, line_id: str, new_parent: Optional[str]) -> None:
-    if new_parent is None:
-        return
-    if new_parent == line_id:
-        raise click.UsageError("a line cannot be its own parent")
-    if new_parent not in lines:
-        raise click.UsageError(f"parent '{new_parent}' not found")
-    if new_parent in descendants_of(lines, line_id):
-        raise click.UsageError(
-            f"cannot set parent to '{new_parent}': it is a descendant of '{line_id}' "
-            "(would create a cycle)"
-        )
+    try:
+        validate_new_parent(lines, line_id, new_parent)
+    except OperationError as e:
+        raise click.UsageError(str(e))
 
 
 def _interactive_edit_line(lines, line: PBSLine) -> None:
@@ -439,20 +437,14 @@ def remove_line(ctx, line_id, yes, cascade, reassign_to):
         what = "line and its entire subtree" if cascade else "line"
         click.confirm(f"Remove {what} '{line_id}'?", abort=True)
 
-    if cascade:
-        for lid in [line_id] + descendants_of(lines, line_id):
-            lines.pop(lid, None)
-    else:
-        new_parent = None
-        if reassign_to is not None:
-            new_parent = reassign_to or None
-            if new_parent is not None and new_parent not in lines:
-                raise click.UsageError(f"reassign-to target '{new_parent}' not found")
-            if new_parent == line_id:
-                raise click.UsageError("cannot reassign children to the line being removed")
-        for kid in kids:
-            lines[kid].parent_line_id = new_parent
-        del lines[line_id]
+    try:
+        if cascade:
+            cascade_delete_line(lines, line_id)
+        else:
+            new_parent = (reassign_to or None) if reassign_to is not None else None
+            reassign_children_and_delete_line(lines, line_id, new_parent)
+    except OperationError as e:
+        raise click.UsageError(str(e))
 
     _save(ctx, lines)
     click.echo(f"Removed line {line_id}")
@@ -660,6 +652,20 @@ def export_cmd(ctx, output_path):
     lines = _load(ctx)
     export_csv(lines, output_path)
     click.echo(f"Exported {len(lines)} line(s) to {output_path}")
+
+
+# --------------------------------------------------------------------------
+# tui
+# --------------------------------------------------------------------------
+
+
+@main.command("tui")
+@click.pass_context
+def tui_cmd(ctx):
+    """Launch the interactive terminal UI."""
+    from .tui import run_tui
+
+    run_tui(ctx.obj["file"])
 
 
 if __name__ == "__main__":

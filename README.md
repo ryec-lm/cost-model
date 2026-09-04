@@ -64,9 +64,32 @@ pbs [-f FILE] show-line      LINE_ID
 pbs [-f FILE] calc           [LINE_ID]
 pbs [-f FILE] validate
 pbs [-f FILE] export         OUTPUT.csv
+pbs [-f FILE] tui
 ```
 
 Run any command with `--help` for its full flag list.
+
+### Interactive terminal UI
+
+`pbs tui` launches a persistent, full-screen terminal app (built on
+[Textual](https://textual.textualize.io/)) instead of one-shot commands:
+a navigable tree on the left with a live detail panel on the right, and
+key-bound actions for everything the CLI does.
+
+| Key | Action |
+| --- | --- |
+| `a` | Add line (as a child of the selected line, or a root line if none selected) |
+| `shift+a` | Add component (selected line must be `first_principles`) |
+| `e` | Edit the selected line or component |
+| `d` | Remove the selected line or component |
+| `v` | Validate |
+| `x` | Export to CSV |
+| `r` | Reload from disk |
+| `q` | Quit |
+
+It reads and writes the same JSON file as the CLI (`-f/--file` still
+applies), so you can freely mix `pbs tui` with individual `pbs` commands
+across sessions.
 
 ### Interactive vs. scripted
 

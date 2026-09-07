@@ -202,6 +202,11 @@ class ComponentRow(Vertical):
     def first_edit_target(self):
         return self.query_one(".cost-type-select", Select)
 
+    def field_widgets(self):
+        """All editable fields in this row, in visual order - used for
+        Tab/Shift+Tab/Left/Right field-to-field navigation."""
+        return list(self.query("Input, Select"))
+
     @on(Select.Changed)
     async def _select_changed(self, event: Select.Changed) -> None:
         event.stop()
@@ -316,6 +321,11 @@ class LineRow(Vertical):
 
     def first_edit_target(self):
         return self.query_one(".name-cell", Input)
+
+    def field_widgets(self):
+        """All editable fields in this row, in visual order - used for
+        Tab/Shift+Tab/Left/Right field-to-field navigation."""
+        return list(self.query("Input, Select"))
 
     @on(Button.Pressed, ".toggle-btn")
     async def _toggle_pressed(self) -> None:
@@ -547,10 +557,21 @@ class PBSApp(App[None]):
         # chord, handled in on_key below - Textual bindings map one key each.
         Binding("K,shift+k", "move_up", "Move up"),
         Binding("J,shift+j", "move_down", "Move down"),
-        # Textual's own Tab/Shift+Tab focus-cycling wins over an app Binding
-        # (Tab moves focus into the row's own fields instead), so indent uses
-        # vim's actual ">"/"<" instead - also more authentically vim than
-        # Tab would have been.
+        # Tab/Shift+Tab move between fields - across the whole table, in
+        # visual order, wrapping at the ends (see action_focus_next/previous
+        # overrides below). Left/Right are the same action as a spreadsheet-
+        # style alias, but only take effect when the focused widget doesn't
+        # already claim them: a focused Input uses Left/Right to move its
+        # text cursor instead (same as a spreadsheet mid-edit), so within an
+        # Input, Tab/Shift+Tab are the reliable way to move fields.
+        Binding("tab", "focus_next", "Next field"),
+        Binding("shift+tab", "focus_previous", "Previous field"),
+        Binding("right", "focus_next", "Next field", show=False),
+        Binding("left", "focus_previous", "Previous field", show=False),
+        # Vim uses ">>"/"<<" (an operator + motion); we simplify to one
+        # keystroke each, more authentically vim than Tab would have been -
+        # Textual's own Tab/Shift+Tab focus-cycling would otherwise have
+        # intercepted them before an app Binding of ours ever saw them.
         Binding("greater_than_sign", "indent", "Indent (>)"),
         Binding("less_than_sign", "outdent", "Outdent (<)"),
         Binding("colon", "open_command_bar", "Command (:w, :e)"),
@@ -741,6 +762,44 @@ class PBSApp(App[None]):
         current = self._current_row()
         index = rows.index(current) - 1 if current in rows else 0
         rows[max(index, 0)].focus()
+
+    def _all_field_widgets(self):
+        widgets = []
+        for row in self._row_widgets():
+            widgets.extend(row.field_widgets())
+        return widgets
+
+    def _cycle_field(self, delta: int) -> None:
+        """Move to the next/previous editable field, in visual row order,
+        wrapping across the whole table. Bound to Tab/Shift+Tab (which
+        Textual would otherwise handle itself, jumping unpredictably once a
+        row's own fields run out) and to Left/Right as a spreadsheet-style
+        alias - though Left/Right only reach here when the focused widget
+        doesn't already claim them (a focused Input uses them to move the
+        text cursor instead, same as a spreadsheet mid-edit)."""
+        fields = self._all_field_widgets()
+        if not fields:
+            return
+        current = self.focused
+        if current in fields:
+            index = fields.index(current)
+        else:
+            row = self._current_row()
+            row_fields = row.field_widgets() if isinstance(row, (LineRow, ComponentRow)) else []
+            if row_fields:
+                edge = row_fields[0] if delta > 0 else row_fields[-1]
+                index = fields.index(edge) - delta
+            else:
+                index = -1 if delta > 0 else 0
+        fields[(index + delta) % len(fields)].focus()
+
+    def action_focus_next(self) -> None:
+        """Overrides the App default (Tab) - see _cycle_field."""
+        self._cycle_field(1)
+
+    def action_focus_previous(self) -> None:
+        """Overrides the App default (Shift+Tab) - see _cycle_field."""
+        self._cycle_field(-1)
 
     def action_enter_edit(self) -> None:
         row = self._current_row()

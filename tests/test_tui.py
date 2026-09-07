@@ -517,3 +517,77 @@ async def test_indent_and_outdent_at_edges_are_noop(tmp_path):
         await pilot.press("<")
         await pilot.pause()
         assert app.lines["L001"].parent_line_id is None
+
+
+async def test_tab_cycles_fields_within_a_row_and_wraps(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        row = _line_row(app, "L001")
+
+        assert app.focused is row.query_one(".name-cell", Input)
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is row.query_one(".method-select", Select)
+
+        # last field in the (only) row - Tab wraps back to the first
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is row.query_one(".wbs-cell", Input)
+
+        # Shift+Tab from the first field wraps back to the last
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert app.focused is row.query_one(".method-select", Select)
+
+
+async def test_tab_reaches_method_specific_fields_and_next_row(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        row1 = _line_row(app, "L001")
+        row1.query_one(".method-select", Select).value = "parametric"
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("ctrl+o")  # second root line
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        row1 = _line_row(app, "L001")  # refresh_table remounted all rows
+        row1.query_one(".name-cell", Input).focus()
+        await pilot.pause()
+        await pilot.press("tab")  # -> method select
+        await pilot.pause()
+        await pilot.press("tab")  # -> quantity (first extra field)
+        await pilot.pause()
+        assert app.focused in row1.query(".field-input")
+
+        await pilot.press("tab")  # -> unit
+        await pilot.press("tab")  # -> unit_rate
+        await pilot.pause()
+        assert app.focused is list(row1.query(".field-input"))[-1]
+
+        await pilot.press("tab")  # last field of row1 -> first field of row2
+        await pilot.pause()
+        row2 = _line_row(app, "L002")
+        assert app.focused is row2.query_one(".wbs-cell", Input)
+
+
+async def test_enter_from_normal_mode_focuses_first_field_via_tab_too(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        row = _line_row(app, "L001")
+        assert app.focused is row
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is row.query_one(".wbs-cell", Input)

@@ -116,6 +116,8 @@ mid-edit:
 | --- | --- |
 | `j` / `k` (or `↓`/`↑`) | Move to the next/previous row (normal mode) |
 | `i` / `Enter` | Start editing the focused row's first field (insert mode) |
+| `Tab` / `Shift+Tab` | Move to the next/previous field - across the whole table, wrapping at the ends |
+| `→` / `←` | Same as Tab/Shift+Tab, except inside an Input's text, where they move the text cursor instead (same as a spreadsheet mid-edit) |
 | `Escape` | Back to normal mode (focus returns to the row) |
 | `o` | Add line (as a child of the focused row, or a root line if none focused) - also drops into insert mode on the new row, like vim's `o` |
 | `Ctrl+o` | Add a root-level line regardless of what's focused (since `o` always nests under the focused row) |

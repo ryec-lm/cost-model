@@ -83,6 +83,11 @@ class CostComponent:
     basis_ref: Optional[str] = None  # line_id or component_id, per ref_type
     percentage_rate: Optional[float] = None
 
+    # Free-text notes/source references, keyed by the field they annotate
+    # (e.g. "quantity", "unit_rate", "amount") - purely informational, never
+    # read by calc.py or validation.py.
+    notes: Dict[str, str] = field(default_factory=dict)
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -122,6 +127,11 @@ class PBSLine:
 
     # first_principles
     cost_components: List[CostComponent] = field(default_factory=list)
+
+    # Free-text notes/source references, keyed by the field they annotate
+    # (e.g. "quantity", "unit_rate", "amount") - purely informational, never
+    # read by calc.py or validation.py.
+    notes: Dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = asdict(self)

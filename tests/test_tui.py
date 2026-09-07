@@ -31,7 +31,7 @@ async def test_o_adds_line_and_enters_edit_mode(tmp_path):
         row.query_one(".method-select", Select).value = "lump_sum"
         await pilot.pause()
         row.query_one(".fields Select").value = "quote"
-        row.query_one(".fields Input").value = "100000"
+        list(row.query(".field-input"))[-1].value = "100000"  # Amount input (after the Basis select)
         await pilot.pause()
 
         line = app.lines["L001"]
@@ -151,7 +151,7 @@ async def test_shift_o_adds_component_to_first_principles_line(tmp_path):
         comp_row.query_one(".method-select", Select).value = "lump_sum"
         await pilot.pause()
         comp_row.query_one(".fields Select").value = "quote"
-        comp_row.query_one(".fields Input").value = "42"
+        list(comp_row.query(".field-input"))[-1].value = "42"  # Amount input (after the Basis select)
         await pilot.pause()
 
         assert app.calculator.calculate_line("L001").cost == 42.0
@@ -563,15 +563,27 @@ async def test_tab_reaches_method_specific_fields_and_next_row(tmp_path):
         await pilot.pause()
         await pilot.press("tab")  # -> method select
         await pilot.pause()
-        await pilot.press("tab")  # -> quantity (first extra field)
+        await pilot.press("tab")  # -> quantity's value field (first extra field)
         await pilot.pause()
         assert app.focused in row1.query(".field-input")
+        assert getattr(app.focused, "field_key", None) == "quantity"
 
-        await pilot.press("tab")  # -> unit
-        await pilot.press("tab")  # -> unit_rate
-        await pilot.pause()
+        # each extra field is 2 tab-stops now (value, then its note) - tab
+        # until field_key advances to unit_rate rather than hardcoding a count
+        seen_keys = []
+        for _ in range(10):
+            await pilot.press("tab")
+            await pilot.pause()
+            key = getattr(app.focused, "field_key", None)
+            if key is not None and key not in seen_keys:
+                seen_keys.append(key)
+            if key == "unit_rate":
+                break
+        assert seen_keys == ["unit_of_measure", "unit_rate"]
         assert app.focused is list(row1.query(".field-input"))[-1]
 
+        await pilot.press("tab")  # unit_rate's own note field
+        await pilot.pause()
         await pilot.press("tab")  # last field of row1 -> first field of row2
         await pilot.pause()
         row2 = _line_row(app, "L002")

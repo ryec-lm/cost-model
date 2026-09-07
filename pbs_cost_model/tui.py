@@ -40,6 +40,7 @@ from .operations import (
     outdent_line,
     reassign_children_and_delete_line,
 )
+from .scc import load_or_seed
 from .storage import JSONRepository, next_component_id, next_line_id, next_sort_index
 from .validation import validate_tree
 from .wbs import compute_wbs_numbers, display_wbs
@@ -99,6 +100,14 @@ def _parse_float_or_none(value: str) -> Optional[float]:
         return None
 
 
+def _set_note(obj, field_key: str, text: str) -> None:
+    text = text.strip()
+    if text:
+        obj.notes[field_key] = text
+    else:
+        obj.notes.pop(field_key, None)
+
+
 def _format_cost(resolved: bool, cost: Optional[float]) -> str:
     if not resolved:
         return "unresolved"
@@ -129,7 +138,19 @@ def _make_field_row(spec: FieldSpec, obj, field_owner) -> Horizontal:
         widget = Input(value=(value or ""), compact=True, classes="field-input")
     widget.field_key = spec.key
     widget.field_owner = field_owner
-    return Horizontal(Label(spec.label, classes="field-label"), widget, classes="field-row")
+
+    note_widget = Input(
+        value=obj.notes.get(spec.key, ""),
+        compact=True,
+        placeholder="note / source ref",
+        classes="field-note",
+    )
+    note_widget.note_for = spec.key
+    note_widget.field_owner = field_owner
+
+    return Horizontal(
+        Label(spec.label, classes="field-label"), widget, note_widget, classes="field-row"
+    )
 
 
 class TotalBar(Static):
@@ -222,10 +243,15 @@ class ComponentRow(Vertical):
     @on(Input.Changed)
     def _input_changed(self, event: Input.Changed) -> None:
         event.stop()
+        comp = self._comp()
+        note_for = getattr(event.input, "note_for", None)
+        if note_for is not None:
+            _set_note(comp, note_for, event.value)
+            self.app_ref.on_data_changed()
+            return
         key = getattr(event.input, "field_key", None)
         if key is None:
             return
-        comp = self._comp()
         if key in FLOAT_FIELDS:
             setattr(comp, key, _parse_float_or_none(event.value))
         else:
@@ -351,10 +377,15 @@ class LineRow(Vertical):
         if getattr(event.input, "_programmatic_update", False):
             event.input._programmatic_update = False
             return
+        line = self._line()
+        note_for = getattr(event.input, "note_for", None)
+        if note_for is not None:
+            _set_note(line, note_for, event.value)
+            self.app_ref.on_data_changed()
+            return
         key = getattr(event.input, "field_key", None)
         if key is None:
             return
-        line = self._line()
         if key == "line_name":
             line.line_name = event.value
         elif key in FLOAT_FIELDS:
@@ -523,6 +554,7 @@ class PBSApp(App[None]):
     .field-row { height: 1; }
     .field-label { width: 34; color: $text-muted; padding-left: 1; }
     .field-input { width: 1fr; }
+    .field-note { width: 1fr; color: $text-muted; }
     Input, Select { background: $panel-lighten-1; }
     Input:focus, Select:focus { background: $boost; }
     .component-row .name-cell { color: $text-muted; }
@@ -584,7 +616,7 @@ class PBSApp(App[None]):
     def __init__(self, file_path: Union[str, Path]):
         super().__init__()
         self.repo = JSONRepository(file_path)
-        self.lines = self.repo.load()
+        self.lines = load_or_seed(self.repo)
         self.calculator = CostCalculator(self.lines)
         self.wbs_numbers: dict = compute_wbs_numbers(self.lines)
         self.collapsed: set = set()
@@ -921,7 +953,7 @@ class PBSApp(App[None]):
 
     async def _load_file(self, path: str) -> None:
         self.repo = JSONRepository(path)
-        self.lines = self.repo.load()
+        self.lines = load_or_seed(self.repo)
         self.collapsed = set()
         await self.refresh_table()
         self.set_status(f"Loaded {path}")
@@ -1043,7 +1075,7 @@ class PBSApp(App[None]):
         self.set_status(f"Exported {len(self.lines)} line(s) to {path}")
 
     async def action_reload(self) -> None:
-        self.lines = self.repo.load()
+        self.lines = load_or_seed(self.repo)
         await self.refresh_table()
         self.set_status("Reloaded from disk")
 

@@ -29,6 +29,7 @@ from .operations import (
     reassign_children_and_delete_line,
     validate_new_parent,
 )
+from .scc import load_or_seed
 from .storage import JSONRepository, next_component_id, next_line_id, next_sort_index
 from .validation import validate_tree
 from .wbs import compute_wbs_numbers, display_wbs
@@ -46,7 +47,7 @@ def _repo(ctx) -> JSONRepository:
 
 
 def _load(ctx):
-    return _repo(ctx).load()
+    return load_or_seed(_repo(ctx))
 
 
 def _save(ctx, lines) -> None:

@@ -113,3 +113,42 @@ def test_edit_line_parent_cycle_rejected(tmp_path):
     r = run(runner, ["edit-line", "L001", "--parent", "L002"], tmp_path)
     assert r.exit_code != 0
     assert "cycle" in r.output
+
+
+def test_note_set_show_and_clear(tmp_path):
+    runner = CliRunner()
+    run(runner, ["add-line", "--name", "Ballast", "--cost-method", "parametric",
+                 "--quantity", "5000", "--unit", "LF", "--unit-rate", "450"], tmp_path)
+
+    r = run(runner, ["note", "L001", "unit_rate", "--text", "RSMeans 2024, line 32 12 16"], tmp_path)
+    assert r.exit_code == 0, r.output
+
+    r = run(runner, ["show-line", "L001"], tmp_path)
+    assert r.exit_code == 0, r.output
+    assert "RSMeans 2024, line 32 12 16" in r.output
+
+    r = run(runner, ["note", "L001", "unit_rate", "--clear"], tmp_path)
+    assert r.exit_code == 0, r.output
+    r = run(runner, ["show-line", "L001"], tmp_path)
+    assert "RSMeans" not in r.output
+
+
+def test_note_on_component(tmp_path):
+    runner = CliRunner()
+    run(runner, ["add-line", "--name", "FP line", "--cost-method", "first_principles"], tmp_path)
+    run(runner, ["add-component", "L001", "--cost-type", "labor", "--cost-method", "lump_sum",
+                 "--lump-sum-basis", "quote", "--amount", "50"], tmp_path)
+
+    r = run(runner, ["note", "L001", "amount", "--component", "C1", "--text", "per subcontractor quote #4"], tmp_path)
+    assert r.exit_code == 0, r.output
+
+    r = run(runner, ["show-line", "L001"], tmp_path)
+    assert "per subcontractor quote #4" in r.output
+
+
+def test_note_requires_text_or_clear(tmp_path):
+    runner = CliRunner()
+    run(runner, ["add-line", "--name", "Ballast"], tmp_path)
+    r = run(runner, ["note", "L001", "amount"], tmp_path)
+    assert r.exit_code != 0
+    assert "--text" in r.output

@@ -541,6 +541,43 @@ def move_line_cmd(ctx, line_id, direction):
 
 
 # --------------------------------------------------------------------------
+# note
+# --------------------------------------------------------------------------
+
+
+@main.command("note")
+@click.argument("line_id")
+@click.argument("field_name")
+@click.option("--component", "component_id", help="Set the note on this line's cost_component instead.")
+@click.option("--text", help="Note or source-reference text to set.")
+@click.option("--clear", is_flag=True, help="Remove the note instead of setting it.")
+@click.pass_context
+def note_cmd(ctx, line_id, field_name, component_id, text, clear):
+    """Attach a note/source-reference to one field of a line or component.
+
+    FIELD_NAME is any attribute name for that method (e.g. quantity, unit_rate,
+    amount, basis_line_ref) - notes are kept independently of which cost_method
+    is currently active, same as the fields themselves.
+    """
+    lines = _load(ctx)
+    line = _require_line(lines, line_id)
+    target = _require_component(line, component_id) if component_id else line
+    label = f"{line_id}/{component_id}" if component_id else line_id
+
+    if clear:
+        target.notes.pop(field_name, None)
+        _save(ctx, lines)
+        click.echo(f"Cleared note on {label}.{field_name}")
+        return
+
+    if not text:
+        raise click.UsageError("--text is required (or use --clear to remove the note)")
+    target.notes[field_name] = text
+    _save(ctx, lines)
+    click.echo(f"Set note on {label}.{field_name}")
+
+
+# --------------------------------------------------------------------------
 # show-tree / show-line
 # --------------------------------------------------------------------------
 
@@ -555,6 +592,16 @@ def _format_cost(result: LineResult) -> str:
     if not result.resolved:
         return f"UNRESOLVED ({result.reason})"
     return f"${result.cost:,.2f}"
+
+
+def _field_line(label: str, value, obj) -> str:
+    # label is "field_name:" (with padding); derive the notes key from it.
+    key = label.rstrip(":").strip()
+    text = f"{label:<18}{value}"
+    note = obj.notes.get(key)
+    if note:
+        text += f"   # {note}"
+    return text
 
 
 @main.command("show-tree")
@@ -613,16 +660,16 @@ def show_line(ctx, line_id):
         click.echo("NOTE:             has both a cost_method and children - children are NOT rolled up into this line")
 
     if line.cost_method == CostMethod.LUMP_SUM.value:
-        click.echo(f"lump_sum_basis:   {line.lump_sum_basis}")
+        click.echo(_field_line("lump_sum_basis:", line.lump_sum_basis, line))
         click.echo(f"confidence:       {confidence_for_basis(line.lump_sum_basis)}")
-        click.echo(f"amount:           {line.amount}")
+        click.echo(_field_line("amount:", line.amount, line))
     elif line.cost_method == CostMethod.PARAMETRIC.value:
-        click.echo(f"quantity:         {line.quantity}")
-        click.echo(f"unit_of_measure:  {line.unit_of_measure}")
-        click.echo(f"unit_rate:        {line.unit_rate}")
+        click.echo(_field_line("quantity:", line.quantity, line))
+        click.echo(_field_line("unit_of_measure:", line.unit_of_measure, line))
+        click.echo(_field_line("unit_rate:", line.unit_rate, line))
     elif line.cost_method == CostMethod.PERCENTAGE.value:
-        click.echo(f"basis_line_ref:   {line.basis_line_ref}")
-        click.echo(f"percentage_rate:  {line.percentage_rate}")
+        click.echo(_field_line("basis_line_ref:", line.basis_line_ref, line))
+        click.echo(_field_line("percentage_rate:", line.percentage_rate, line))
     elif line.cost_method == CostMethod.FIRST_PRINCIPLES.value:
         click.echo("cost_components:")
         if not line.cost_components:
@@ -633,6 +680,8 @@ def show_line(ctx, line_id):
                 f"  {comp.component_id} [{comp.cost_type}/{comp.cost_method}] "
                 f"- {_format_cost(comp_result) if comp_result.resolved else 'UNRESOLVED (' + str(comp_result.reason) + ')'}"
             )
+            for field_name, note in comp.notes.items():
+                click.echo(f"    {field_name}: {note}")
 
     click.echo(f"rolled_up_cost:   {_format_cost(result)}")
 

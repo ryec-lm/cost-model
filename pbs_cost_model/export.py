@@ -32,7 +32,12 @@ FIELDNAMES = [
     "resolved",
     "cost",
     "reason",
+    "notes",
 ]
+
+
+def _format_notes(notes: dict) -> str:
+    return "; ".join(f"{field}: {text}" for field, text in notes.items())
 
 
 def export_csv(lines: PBSTree, path: Union[str, Path]) -> None:
@@ -62,6 +67,7 @@ def export_csv(lines: PBSTree, path: Union[str, Path]) -> None:
                 "resolved": result.resolved if result else "",
                 "cost": result.cost if result and result.cost is not None else "",
                 "reason": result.reason or "" if result else "",
+                "notes": _format_notes(line.notes),
             }
         )
         for comp in line.cost_components:
@@ -90,6 +96,7 @@ def export_csv(lines: PBSTree, path: Union[str, Path]) -> None:
                     "resolved": comp_result.resolved,
                     "cost": comp_result.cost if comp_result.cost is not None else "",
                     "reason": comp_result.reason or "",
+                    "notes": _format_notes(comp.notes),
                 }
             )
         for child_id in children_of(lines, line_id):

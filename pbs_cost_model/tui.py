@@ -178,8 +178,18 @@ class ComponentRow(Vertical):
         line = self.app_ref.lines[self.line_id]
         return next(c for c in line.cost_components if c.component_id == self.component_id)
 
+    def _fold_key(self):
+        return (self.line_id, self.component_id)
+
     def compose(self) -> ComposeResult:
         comp = self._comp()
+        # Components always have a cost_method (required at creation) so
+        # they always have detail fields to fold - toggle is always shown.
+        toggle = Button(
+            "v" if self._fold_key() not in self.app_ref.collapsed_components else ">",
+            compact=True,
+            classes="toggle-btn",
+        )
         wbs_spacer = Static("", classes="wbs-cell")  # aligns with LineRow's WBS column; components aren't numbered
         indent = Static("")
         indent.styles.width = self.depth * 2 + 3
@@ -198,19 +208,29 @@ class ComponentRow(Vertical):
         )
         method.field_key = "cost_method"
         method.field_owner = self
+        method._programmatic_update = True  # Select fires Changed on mount even with no real edit
         yield Horizontal(
-            wbs_spacer, indent, id_label, cost_type, method, Static("", classes="cost-label"), classes="row-header"
+            wbs_spacer, toggle, indent, id_label, cost_type, method, Static("", classes="cost-label"),
+            classes="row-header",
         )
-        yield Vertical(*self._field_rows(comp), classes="fields")
+        fields = Vertical(*self._field_rows(comp), classes="fields")
+        fields.display = self._fold_key() not in self.app_ref.collapsed_components
+        yield fields
 
     def _field_rows(self, comp: CostComponent):
         return [_make_field_row(spec, comp, self) for spec in COMPONENT_FIELDS.get(comp.cost_method, [])]
 
     async def rebuild_fields(self) -> None:
         comp = self._comp()
+        self.app_ref.collapsed_components.discard(self._fold_key())  # show what just changed
         fields = self.query_one(".fields", Vertical)
         await fields.remove_children()
         await fields.mount_all(self._field_rows(comp))
+        fields.display = True
+
+    @on(Button.Pressed, ".toggle-btn")
+    async def _toggle_pressed(self) -> None:
+        await self.app_ref.toggle_collapse_component(self.line_id, self.component_id)
 
     def refresh_cost(self, calculator: CostCalculator) -> None:
         line = self.app_ref.lines[self.line_id]
@@ -231,6 +251,9 @@ class ComponentRow(Vertical):
     @on(Select.Changed)
     async def _select_changed(self, event: Select.Changed) -> None:
         event.stop()
+        if getattr(event.select, "_programmatic_update", False):
+            event.select._programmatic_update = False
+            return
         key = getattr(event.select, "field_key", None)
         if key is None:
             return
@@ -277,18 +300,17 @@ class LineRow(Vertical):
     def compose(self) -> ComposeResult:
         line = self._line()
         has_kids = bool(children_of(self.app_ref.lines, self.line_id)) or bool(line.cost_components)
+        has_fields = bool(self._field_rows(line))
 
         indent = Static("")
         indent.styles.width = self.depth * 2
 
-        if has_kids:
-            toggle = Button(
-                "v" if self.line_id not in self.app_ref.collapsed else ">",
-                compact=True,
-                classes="toggle-btn",
-            )
-        else:
-            toggle = Static("", classes="toggle-btn")
+        toggle = Button(
+            "v" if self.line_id not in self.app_ref.collapsed else ">",
+            compact=True,
+            classes="toggle-btn",
+        )
+        toggle.display = has_kids or has_fields
 
         wbs = Input(
             value=display_wbs(line, self.app_ref.wbs_numbers),
@@ -311,22 +333,30 @@ class LineRow(Vertical):
         )
         method.field_key = "cost_method"
         method.field_owner = self
+        method._programmatic_update = True  # Select fires Changed on mount even with no real edit
 
         flag = Static("", classes="flag")
 
         yield Horizontal(
             wbs, toggle, indent, name, method, Static("", classes="cost-label"), flag, classes="row-header"
         )
-        yield Vertical(*self._field_rows(line), classes="fields")
+        fields = Vertical(*self._field_rows(line), classes="fields")
+        fields.display = self.line_id not in self.app_ref.collapsed
+        yield fields
 
     def _field_rows(self, line: PBSLine):
         return [_make_field_row(spec, line, self) for spec in LINE_FIELDS.get(line.cost_method, [])]
 
     async def rebuild_fields(self) -> None:
         line = self._line()
+        self.app_ref.collapsed.discard(self.line_id)  # show what just changed
         fields = self.query_one(".fields", Vertical)
         await fields.remove_children()
-        await fields.mount_all(self._field_rows(line))
+        new_rows = self._field_rows(line)
+        await fields.mount_all(new_rows)
+        fields.display = True
+        has_kids = bool(children_of(self.app_ref.lines, self.line_id)) or bool(line.cost_components)
+        self.query_one(".toggle-btn", Button).display = has_kids or bool(new_rows)
 
     def refresh_cost(self, calculator: CostCalculator) -> None:
         result = calculator.calculate_line(self.line_id)
@@ -360,6 +390,9 @@ class LineRow(Vertical):
     @on(Select.Changed)
     async def _select_changed(self, event: Select.Changed) -> None:
         event.stop()
+        if getattr(event.select, "_programmatic_update", False):
+            event.select._programmatic_update = False
+            return
         key = getattr(event.select, "field_key", None)
         if key is None:
             return
@@ -620,6 +653,7 @@ class PBSApp(App[None]):
         self.calculator = CostCalculator(self.lines)
         self.wbs_numbers: dict = compute_wbs_numbers(self.lines)
         self.collapsed: set = set()
+        self.collapsed_components: set = set()
         self._pending_dd = False
         self._pre_command_row = None
 
@@ -762,6 +796,14 @@ class PBSApp(App[None]):
         else:
             self.collapsed.add(line_id)
         await self.refresh_table(focus_line_id=line_id)
+
+    async def toggle_collapse_component(self, line_id: str, component_id: str) -> None:
+        key = (line_id, component_id)
+        if key in self.collapsed_components:
+            self.collapsed_components.discard(key)
+        else:
+            self.collapsed_components.add(key)
+        await self.refresh_table(focus_line_id=line_id, focus_component_id=component_id)
 
     # -- actions ------------------------------------------------
 

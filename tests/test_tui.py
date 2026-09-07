@@ -603,3 +603,80 @@ async def test_enter_from_normal_mode_focuses_first_field_via_tab_too(tmp_path):
         await pilot.press("tab")
         await pilot.pause()
         assert app.focused is row.query_one(".wbs-cell", Input)
+
+
+async def test_line_toggle_folds_and_unfolds_method_fields(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        row = _line_row(app, "L001")
+        row.query_one(".method-select", Select).value = "parametric"
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        row = _line_row(app, "L001")
+        assert len(list(row.query(".field-input"))) == 3
+        assert row.query_one(".fields").display is True
+
+        toggle = row.query_one(".toggle-btn", Button)
+        toggle.press()
+        await pilot.pause()
+
+        row = _line_row(app, "L001")
+        assert row.query_one(".fields").display is False
+        assert "L001" in app.collapsed
+
+        toggle = row.query_one(".toggle-btn", Button)
+        toggle.press()
+        await pilot.pause()
+
+        row = _line_row(app, "L001")
+        assert row.query_one(".fields").display is True
+        assert "L001" not in app.collapsed
+
+
+async def test_component_toggle_folds_and_unfolds_its_own_fields(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        row = _line_row(app, "L001")
+        row.query_one(".method-select", Select).value = "first_principles"
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await pilot.press("O")
+        await pilot.pause()
+        line = app.lines["L001"]
+        component_id = line.cost_components[0].component_id
+        comp_row = _component_row(app, "L001", component_id)
+        comp_row.query_one(".method-select", Select).value = "lump_sum"
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        comp_row = _component_row(app, "L001", component_id)
+        assert len(list(comp_row.query(".field-input"))) == 2
+        assert comp_row.query_one(".fields").display is True
+
+        toggle = comp_row.query_one(".toggle-btn", Button)
+        toggle.press()
+        await pilot.pause()
+
+        comp_row = _component_row(app, "L001", component_id)
+        assert comp_row.query_one(".fields").display is False
+        assert (comp_row.line_id, comp_row.component_id) in app.collapsed_components
+
+        # folding a component must not also hide its parent line's children
+        assert len(list(app.query(ComponentRow))) == 1
+
+        toggle = comp_row.query_one(".toggle-btn", Button)
+        toggle.press()
+        await pilot.pause()
+
+        comp_row = _component_row(app, "L001", component_id)
+        assert comp_row.query_one(".fields").display is True
+        assert (comp_row.line_id, comp_row.component_id) not in app.collapsed_components

@@ -1,8 +1,11 @@
 # PBS Cost Model CLI
 
 A CLI for building a first-principles cost estimate as a Product Breakdown
-Structure (PBS) tree. The hierarchy is entirely user-defined - nothing here
-is hardcoded to any particular FTA SCC or discipline.
+Structure (PBS) tree. The hierarchy is entirely user-defined - nothing in
+the code is hardcoded to any particular FTA SCC or discipline. A brand new
+tree is seeded with the 10 FTA Standard Cost Categories as L1 lines (see
+[Storage](#storage)), purely as a starting default - rename, reorder,
+delete, or add to them freely.
 
 ## Install
 
@@ -52,6 +55,12 @@ is not allowed here, no recursive nesting). A percentage component's
 `basis_ref` can point to another PBS line (`ref_type=line`) or to a sibling
 component in the same first_principles line (`ref_type=sibling_component`).
 
+Any line or component field driven by user judgment (a rate, a quantity, a
+basis) can carry a free-text **note** alongside it - a source reference,
+an assumption, a citation - stored in that object's `notes` dict, keyed by
+field name. Notes are purely informational: `calc.py` and `validation.py`
+never read them.
+
 ## Storage
 
 The tree is stored as JSON (default `pbs_tree.json` in the current
@@ -60,6 +69,13 @@ a `PBSRepository` interface with `load()`/`save()` - the CLI and
 calculation code never touch the file format directly, so swapping in a
 SQLite-backed repository later doesn't require touching `cli.py`,
 `calc.py`, or `validation.py`.
+
+Loading a file that doesn't exist yet (`pbs_cost_model/scc.py`,
+`load_or_seed`) seeds it with the 10 FTA Standard Cost Categories (WBS
+10-100) as root lines before returning, instead of an empty tree - both
+the CLI and the TUI go through this path. Pointing `-f`/`:e` at a file
+that already exists (even an empty one) never seeds it, so this only ever
+affects a genuinely new file.
 
 ## Commands
 
@@ -71,6 +87,7 @@ pbs [-f FILE] edit-component LINE_ID COMPONENT_ID [same flags as add-component]
 pbs [-f FILE] remove-line    LINE_ID  [--yes] [--cascade | --reassign-to PARENT_ID]
 pbs [-f FILE] remove-component LINE_ID COMPONENT_ID [--yes]
 pbs [-f FILE] move-line      LINE_ID  up|down|indent|outdent
+pbs [-f FILE] note           LINE_ID FIELD_NAME [--component ID] [--text TEXT | --clear]
 pbs [-f FILE] show-tree      [LINE_ID]
 pbs [-f FILE] show-line      LINE_ID
 pbs [-f FILE] calc           [LINE_ID]
@@ -86,6 +103,10 @@ pbs [-f FILE] tui
 `save-as` writes the current tree to a different JSON file - the CLI has
 no notion of "the open file" the way the TUI does, so this is really just
 load-then-save-elsewhere, useful for snapshots (`estimate_v2.json`).
+`note` sets or clears the note on one field (`FIELD_NAME` is the
+attribute name, e.g. `unit_rate`, `amount`); add `--component ID` to note
+a field on a cost_component instead of the line itself. Exactly one of
+`--text`/`--clear` is required.
 
 Run any command with `--help` for its full flag list.
 
@@ -99,9 +120,11 @@ totals bar pinned at the bottom. There are no popup edit forms: pick a row's
 cost method from its dropdown and the row grows downward in place to reveal
 exactly the fields that method needs (e.g. picking `parametric` reveals
 Quantity/Unit/Rate right below the row); every field commits as you type or
-select, and the tree/totals recompute live. Modals are used only for the
-rare, destructive/report actions: removing a line with children, validate,
-and export.
+select, and the tree/totals recompute live. Each method-specific field has
+its own note/source-reference input next to it (muted text, "note / source
+ref" placeholder) - free text, never used in calculation. Modals are used
+only for the rare, destructive/report actions: removing a line with
+children, validate, and export.
 
 Navigation is modal, vim-style, rather than function keys (not every
 terminal passes those through) or plain letters (a letter binding would
@@ -136,8 +159,14 @@ plain uppercase character, not "shift+x" - so it's written here as
 `Shift+O`/`Shift+K`/`Shift+J` but the bindings fire on the letters `O`,
 `K`, `J` themselves. `Ctrl+letter` combos don't have this ambiguity.
 
-Click a line's `v`/`>` toggle (mouse only, for now) to collapse/expand its
-children, including a `first_principles` line's components. Mouse clicks
+Click a line's or component's `v`/`>` toggle (mouse only, for now) to fold
+it: one toggle hides both its children (a first_principles line's
+components included) *and* its own method-specific fields, so a fully
+built-out row collapses to a single line and the table stays scannable.
+Fields default to expanded on every new/freshly-loaded row - the fold is
+purely a read-time convenience, it doesn't change any data. A row only
+gets a toggle if it has something to fold (children, or a chosen cost
+method); a bare rollup line with neither shows no toggle. Mouse clicks
 always work for editing too - clicking any field jumps straight into
 editing it, same as `i`/`Enter`. The WBS cell is just another editable
 field, in its own fixed column on the far left: it shows the
@@ -208,6 +237,7 @@ pbs export estimate.csv
 pbs move-line L003 up            # Ballast before Track Structure -> WBS renumbers
 pbs move-line L004 indent        # Design & Engineering -> child of Ballast
 pbs edit-line L004 --wbs 99.0    # pin Design & Engineering to a fixed number
+pbs note L002 unit_rate --text "RSMeans 2024, line 32 12 16"
 pbs save-as estimate_v2.json     # snapshot to a new file
 ```
 

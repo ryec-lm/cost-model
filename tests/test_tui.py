@@ -542,6 +542,44 @@ async def test_tab_cycles_fields_within_a_row_and_wraps(tmp_path):
         assert app.focused is row.query_one(".method-select", Select)
 
 
+async def test_left_right_navigate_cells_even_from_inside_an_input(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        row = _line_row(app, "L001")
+        row.query_one(".method-select", Select).value = "parametric"
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        row = _line_row(app, "L001")
+        await pilot.press("right")  # row -> wbs
+        await pilot.pause()
+        assert app.focused is row.query_one(".wbs-cell", Input)
+
+        await pilot.press("right")  # wbs -> name
+        await pilot.pause()
+        assert app.focused is row.query_one(".name-cell", Input)
+
+        # typing text into an Input used to make it swallow every further
+        # Left/Right press for its own text cursor, capping navigation at
+        # one field per row - it must still hand off to cell navigation.
+        app.focused.value = "Ballast"
+        await pilot.pause()
+        await pilot.press("right")  # name -> method
+        await pilot.pause()
+        assert app.focused is row.query_one(".method-select", Select)
+
+        await pilot.press("right")  # method -> quantity (first method field)
+        await pilot.pause()
+        assert getattr(app.focused, "field_key", None) == "quantity"
+
+        await pilot.press("left")  # back to method
+        await pilot.pause()
+        assert app.focused is row.query_one(".method-select", Select)
+
+
 async def test_tab_reaches_method_specific_fields_and_next_row(tmp_path):
     app = PBSApp(str(tmp_path / "tree.json"))
     async with app.run_test() as pilot:

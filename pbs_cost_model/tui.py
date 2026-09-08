@@ -622,17 +622,20 @@ class PBSApp(App[None]):
         # chord, handled in on_key below - Textual bindings map one key each.
         Binding("K,shift+k", "move_up", "Move up"),
         Binding("J,shift+j", "move_down", "Move down"),
-        # Tab/Shift+Tab move between fields - across the whole table, in
-        # visual order, wrapping at the ends (see action_focus_next/previous
-        # overrides below). Left/Right are the same action as a spreadsheet-
-        # style alias, but only take effect when the focused widget doesn't
-        # already claim them: a focused Input uses Left/Right to move its
-        # text cursor instead (same as a spreadsheet mid-edit), so within an
-        # Input, Tab/Shift+Tab are the reliable way to move fields.
+        # Tab/Shift+Tab and Left/Right all move between fields - across the
+        # whole table, in visual order, wrapping at the ends (see
+        # action_focus_next/previous overrides below). Left/Right need
+        # priority=True: Input has its own left/right bindings to move the
+        # text cursor, which would otherwise claim the key before our
+        # App-level binding ever saw it, capping cell-to-cell navigation at
+        # exactly one field per row (the input's own cursor eats every
+        # subsequent press). Priority makes cell navigation win outright -
+        # Home/End/Backspace/Delete and typing still edit the field's text,
+        # just not Left/Right.
         Binding("tab", "focus_next", "Next field"),
         Binding("shift+tab", "focus_previous", "Previous field"),
-        Binding("right", "focus_next", "Next field", show=False),
-        Binding("left", "focus_previous", "Previous field", show=False),
+        Binding("right", "focus_next", "Next field", show=False, priority=True),
+        Binding("left", "focus_previous", "Previous field", show=False, priority=True),
         # Vim uses ">>"/"<<" (an operator + motion); we simplify to one
         # keystroke each, more authentically vim than Tab would have been -
         # Textual's own Tab/Shift+Tab focus-cycling would otherwise have

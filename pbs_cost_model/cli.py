@@ -32,7 +32,7 @@ from .operations import (
 from .scc import load_or_seed
 from .storage import JSONRepository, next_component_id, next_line_id, next_sort_index
 from .validation import validate_tree
-from .wbs import compute_wbs_numbers, display_wbs
+from .wbs import compute_wbs_numbers, display_component_wbs, display_wbs
 
 METHOD_CHOICES = [m.value for m in CostMethod] + ["none"]
 COMPONENT_METHOD_CHOICES = [m.value for m in CostMethod if m != CostMethod.FIRST_PRINCIPLES]
@@ -674,10 +674,12 @@ def show_line(ctx, line_id):
         click.echo("cost_components:")
         if not line.cost_components:
             click.echo("  (none)")
+        wbs_numbers = compute_wbs_numbers(lines)
         for comp in line.cost_components:
             comp_result = calculator.calculate_component(line, comp)
+            comp_wbs = display_component_wbs(line, comp, wbs_numbers)
             click.echo(
-                f"  {comp.component_id} [{comp.cost_type}/{comp.cost_method}] "
+                f"  {comp_wbs}  {comp.component_id} [{comp.cost_type}/{comp.cost_method}] "
                 f"- {_format_cost(comp_result) if comp_result.resolved else 'UNRESOLVED (' + str(comp_result.reason) + ')'}"
             )
             for field_name, note in comp.notes.items():

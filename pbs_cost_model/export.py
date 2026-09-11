@@ -8,7 +8,7 @@ from typing import Union
 
 from .calc import CostCalculator
 from .models import PBSTree, children_of, confidence_for_basis, root_lines
-from .wbs import compute_wbs_numbers, display_wbs
+from .wbs import compute_wbs_numbers, display_component_wbs, display_wbs
 
 FIELDNAMES = [
     "row_type",
@@ -75,7 +75,7 @@ def export_csv(lines: PBSTree, path: Union[str, Path]) -> None:
             rows.append(
                 {
                     "row_type": "component",
-                    "wbs": "",
+                    "wbs": display_component_wbs(line, comp, wbs_numbers),
                     "line_id": line.line_id,
                     "parent_line_id": line.parent_line_id or "",
                     "line_name": line.line_name,

@@ -1,6 +1,6 @@
-from pbs_cost_model.models import PBSLine
+from pbs_cost_model.models import CostComponent, PBSLine
 from pbs_cost_model.operations import indent_line, move_line, outdent_line
-from pbs_cost_model.wbs import compute_wbs_numbers, display_wbs
+from pbs_cost_model.wbs import compute_wbs_numbers, display_component_wbs, display_wbs
 
 
 def line(**kwargs) -> PBSLine:
@@ -43,6 +43,38 @@ def test_no_override_uses_computed():
     lines = {"L001": line(line_id="L001", line_name="A", sort_index=0)}
     numbers = compute_wbs_numbers(lines)
     assert display_wbs(lines["L001"], numbers) == "1"
+
+
+def test_component_wbs_extends_parent_line_number():
+    parent = line(
+        line_id="L001",
+        line_name="Signal Interface",
+        sort_index=0,
+        parent_line_id=None,
+        cost_method="first_principles",
+    )
+    c1 = CostComponent(component_id="C1", cost_type="labor", cost_method="lump_sum")
+    c2 = CostComponent(component_id="C2", cost_type="material", cost_method="parametric")
+    parent.cost_components = [c1, c2]
+    lines = {"L001": parent}
+    numbers = compute_wbs_numbers(lines)
+    assert display_component_wbs(parent, c1, numbers) == "1.1"
+    assert display_component_wbs(parent, c2, numbers) == "1.2"
+
+
+def test_component_wbs_follows_parent_override():
+    parent = line(
+        line_id="L001",
+        line_name="Signal Interface",
+        sort_index=0,
+        wbs_override="50.0",
+        cost_method="first_principles",
+    )
+    comp = CostComponent(component_id="C1", cost_type="labor", cost_method="lump_sum")
+    parent.cost_components = [comp]
+    lines = {"L001": parent}
+    numbers = compute_wbs_numbers(lines)
+    assert display_component_wbs(parent, comp, numbers) == "50.0.1"
 
 
 def test_move_line_swaps_sort_index_with_neighbor():

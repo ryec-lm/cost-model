@@ -96,6 +96,31 @@ def test_add_component_and_first_principles_calc(tmp_path):
     assert "$70.00" in r.output
 
 
+def test_component_wbs_extends_parent_line_wbs(tmp_path):
+    runner = CliRunner()
+    run(runner, ["add-line", "--name", "FP line", "--cost-method", "first_principles"], tmp_path)
+    run(runner, ["add-component", "L001", "--cost-type", "labor", "--cost-method", "lump_sum",
+                 "--lump-sum-basis", "quote", "--amount", "50"], tmp_path)
+    run(runner, ["add-component", "L001", "--cost-type", "material", "--cost-method", "parametric",
+                 "--quantity", "10", "--unit", "EA", "--unit-rate", "2"], tmp_path)
+
+    r = run(runner, ["show-line", "L001"], tmp_path)
+    assert r.exit_code == 0, r.output
+    assert "1.1  C1" in r.output
+    assert "1.2  C2" in r.output
+
+    run(runner, ["edit-line", "L001", "--wbs", "50.0"], tmp_path)
+    r = run(runner, ["show-line", "L001"], tmp_path)
+    assert "50.0.1  C1" in r.output
+
+    csv_path = tmp_path / "out.csv"
+    run(runner, ["export", str(csv_path)], tmp_path)
+    rows = list(csv.DictReader(csv_path.open()))
+    component_rows = [row for row in rows if row["row_type"] == "component"]
+    assert component_rows[0]["wbs"] == "50.0.1"
+    assert component_rows[1]["wbs"] == "50.0.2"
+
+
 def test_edit_line_updates_field(tmp_path):
     runner = CliRunner()
     run(runner, ["add-line", "--name", "Original", "--cost-method", "lump_sum",

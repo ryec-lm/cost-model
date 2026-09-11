@@ -43,7 +43,7 @@ from .operations import (
 from .scc import load_or_seed
 from .storage import JSONRepository, next_component_id, next_line_id, next_sort_index
 from .validation import validate_tree
-from .wbs import compute_wbs_numbers, display_wbs
+from .wbs import compute_wbs_numbers, display_component_wbs, display_wbs
 
 LUMP_SUM_BASES = ["quote", "historical", "analogous", "allowance"]
 LINE_METHOD_OPTIONS = [(m.value, m.value) for m in CostMethod] + [("none", "none")]
@@ -190,7 +190,7 @@ class ComponentRow(Vertical):
             compact=True,
             classes="toggle-btn",
         )
-        wbs_spacer = Static("", classes="wbs-cell")  # aligns with LineRow's WBS column; components aren't numbered
+        wbs_label = Static(self._component_wbs(), classes="wbs-cell")
         indent = Static("")
         indent.styles.width = self.depth * 2 + 3
         id_label = Static(comp.component_id, classes="name-cell")
@@ -210,12 +210,16 @@ class ComponentRow(Vertical):
         method.field_owner = self
         method._programmatic_update = True  # Select fires Changed on mount even with no real edit
         yield Horizontal(
-            wbs_spacer, toggle, indent, id_label, cost_type, method, Static("", classes="cost-label"),
+            wbs_label, toggle, indent, id_label, cost_type, method, Static("", classes="cost-label"),
             classes="row-header",
         )
         fields = Vertical(*self._field_rows(comp), classes="fields")
         fields.display = self._fold_key() not in self.app_ref.collapsed_components
         yield fields
+
+    def _component_wbs(self) -> str:
+        line = self.app_ref.lines[self.line_id]
+        return display_component_wbs(line, self._comp(), self.app_ref.wbs_numbers)
 
     def _field_rows(self, comp: CostComponent):
         return [_make_field_row(spec, comp, self) for spec in COMPONENT_FIELDS.get(comp.cost_method, [])]
@@ -239,6 +243,7 @@ class ComponentRow(Vertical):
         label = self.query_one(".cost-label", Static)
         label.update(_format_cost(result.resolved, result.cost))
         label.set_class(not result.resolved, "-unresolved")
+        self.query_one(".wbs-cell", Static).update(self._component_wbs())
 
     def first_edit_target(self):
         return self.query_one(".cost-type-select", Select)

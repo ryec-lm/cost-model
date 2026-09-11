@@ -54,6 +54,10 @@ to auto-numbering.
 is not allowed here, no recursive nesting). A percentage component's
 `basis_ref` can point to another PBS line (`ref_type=line`) or to a sibling
 component in the same first_principles line (`ref_type=sibling_component`).
+A component's WBS number extends its parent line's - the second component
+under line `1.1` (pinned or auto) is `1.1.2` - since components have no
+`wbs_override` of their own: they aren't independently reorderable, so
+their number is always just their position in the line's `cost_components`.
 
 Any line or component field driven by user judgment (a rate, a quantity, a
 basis) can carry a free-text **note** alongside it - a source reference,

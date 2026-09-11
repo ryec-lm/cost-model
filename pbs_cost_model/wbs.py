@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from .models import PBSLine, PBSTree, children_of, root_lines
+from .models import CostComponent, PBSLine, PBSTree, children_of, root_lines
 
 
 def compute_wbs_numbers(lines: PBSTree) -> Dict[str, str]:
@@ -30,3 +30,13 @@ def compute_wbs_numbers(lines: PBSTree) -> Dict[str, str]:
 
 def display_wbs(line: PBSLine, computed: Dict[str, str]) -> str:
     return line.wbs_override or computed.get(line.line_id, "")
+
+
+def display_component_wbs(line: PBSLine, component: CostComponent, computed: Dict[str, str]) -> str:
+    """A component's number extends its parent line's displayed WBS with its
+    1-based position among the line's cost_components - e.g. line "1.1"'s
+    second component is "1.1.2". Components have no wbs_override of their
+    own: they aren't independently reorderable, so their position is always
+    just their index in cost_components."""
+    index = line.cost_components.index(component) + 1
+    return f"{display_wbs(line, computed)}.{index}"

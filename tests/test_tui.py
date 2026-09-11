@@ -1,4 +1,4 @@
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Input, Select, Static
 
 from pbs_cost_model.models import PBSLine
 from pbs_cost_model.storage import JSONRepository
@@ -307,6 +307,39 @@ async def test_wbs_column_shows_computed_number(tmp_path):
 
         assert _line_row(app, "L001").query_one(".wbs-cell", Input).value == "1"
         assert _line_row(app, "L002").query_one(".wbs-cell", Input).value == "1.1"
+
+
+async def test_component_wbs_extends_parent_line_number(tmp_path):
+    app = PBSApp(str(tmp_path / "tree.json"))
+    async with app.run_test() as pilot:
+        await pilot.press("o")
+        await pilot.pause()
+        row = _line_row(app, "L001")
+        row.query_one(".method-select", Select).value = "first_principles"
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await pilot.press("O")  # first component
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("k")  # back to the parent line row - "O" only works from there
+        await pilot.pause()
+        await pilot.press("O")  # second component
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+        line = app.lines["L001"]
+        c1, c2 = line.cost_components
+        assert _component_row(app, "L001", c1.component_id).query_one(".wbs-cell", Static).content == "1.1"
+        assert _component_row(app, "L001", c2.component_id).query_one(".wbs-cell", Static).content == "1.2"
+
+        # pinning the parent's WBS carries through to its components
+        _line_row(app, "L001").query_one(".wbs-cell", Input).value = "50.0"
+        await pilot.pause()
+        assert _component_row(app, "L001", c1.component_id).query_one(".wbs-cell", Static).content == "50.0.1"
 
 
 async def test_wbs_override_pins_number_until_cleared(tmp_path):
